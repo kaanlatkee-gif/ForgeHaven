@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "rHouWeibjdw=",
+  "success": true,
+  "projectFilePath": "/home/user/ForgeHavenPrototype/src/SimTests/SimTests.csproj",
+  "expectedPackageFiles": [
+    "/home/user/.nuget/packages/microsoft.win32.systemevents/8.0.0/microsoft.win32.systemevents.8.0.0.nupkg.sha512",
+    "/home/user/.nuget/packages/system.drawing.common/8.0.0/system.drawing.common.8.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}

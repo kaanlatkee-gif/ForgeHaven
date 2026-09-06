@@ -1,0 +1,14 @@
+C:\Users\Kaan\Downloads\Downloads\V0.0.42\ForgeHavenPrototype\src\ForgeHaven\bin\Debug\net8.0-windows\ForgeHaven.exe
+C:\Users\Kaan\Downloads\Downloads\V0.0.42\ForgeHavenPrototype\src\ForgeHaven\bin\Debug\net8.0-windows\ForgeHaven.deps.json
+C:\Users\Kaan\Downloads\Downloads\V0.0.42\ForgeHavenPrototype\src\ForgeHaven\bin\Debug\net8.0-windows\ForgeHaven.runtimeconfig.json
+C:\Users\Kaan\Downloads\Downloads\V0.0.42\ForgeHavenPrototype\src\ForgeHaven\bin\Debug\net8.0-windows\ForgeHaven.dll
+C:\Users\Kaan\Downloads\Downloads\V0.0.42\ForgeHavenPrototype\src\ForgeHaven\bin\Debug\net8.0-windows\ForgeHaven.pdb
+C:\Users\Kaan\Downloads\Downloads\V0.0.42\ForgeHavenPrototype\src\ForgeHaven\obj\Debug\net8.0-windows\ForgeHaven.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Kaan\Downloads\Downloads\V0.0.42\ForgeHavenPrototype\src\ForgeHaven\obj\Debug\net8.0-windows\ForgeHaven.AssemblyInfoInputs.cache
+C:\Users\Kaan\Downloads\Downloads\V0.0.42\ForgeHavenPrototype\src\ForgeHaven\obj\Debug\net8.0-windows\ForgeHaven.AssemblyInfo.cs
+C:\Users\Kaan\Downloads\Downloads\V0.0.42\ForgeHavenPrototype\src\ForgeHaven\obj\Debug\net8.0-windows\ForgeHaven.csproj.CoreCompileInputs.cache
+C:\Users\Kaan\Downloads\Downloads\V0.0.42\ForgeHavenPrototype\src\ForgeHaven\obj\Debug\net8.0-windows\ForgeHaven.dll
+C:\Users\Kaan\Downloads\Downloads\V0.0.42\ForgeHavenPrototype\src\ForgeHaven\obj\Debug\net8.0-windows\refint\ForgeHaven.dll
+C:\Users\Kaan\Downloads\Downloads\V0.0.42\ForgeHavenPrototype\src\ForgeHaven\obj\Debug\net8.0-windows\ForgeHaven.pdb
+C:\Users\Kaan\Downloads\Downloads\V0.0.42\ForgeHavenPrototype\src\ForgeHaven\obj\Debug\net8.0-windows\ForgeHaven.genruntimeconfig.cache
+C:\Users\Kaan\Downloads\Downloads\V0.0.42\ForgeHavenPrototype\src\ForgeHaven\obj\Debug\net8.0-windows\ref\ForgeHaven.dll
