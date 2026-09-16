@@ -1820,22 +1820,27 @@ Section("ROTATE PLACED BUILDINGS");
     belt.Rotate(true);                  // counter-clockwise
     Check("ccw rotate restores the curve", belt.Face == Dir.Right && belt.BendIn == Dir.Up);
 
-    // drill output follows rotation
+    // machine item IO is now Mindustry-style: no fixed output port.
+    // Rotation still turns the sprite/facing, but adjacent belts/buildings
+    // decide input vs output by their own direction and acceptance rules.
     for (int x = 5; x <= 6; x++)
         for (int y = 8; y <= 9; y++) g.World.SetTerrain(x, y, Terrain.IronOre);
     Place(g, BuildKind.Drill, 5, 8, Dir.Right);
-    Place(g, BuildKind.Belt, 7, 9, Dir.Down);    // east edge middle
-    Place(g, BuildKind.Belt, 6, 7, Dir.Up);      // north edge middle
+    Place(g, BuildKind.Belt, 7, 9, Dir.Right);   // east side, flowing away
+    Place(g, BuildKind.Belt, 6, 7, Dir.Up);      // north side, flowing away
     var drill = (Drill)g.World.Cell(5, 8).B!;
     var east = (Belt)g.World.Cell(7, 9).B!;
     var north = (Belt)g.World.Cell(6, 7).B!;
     drill.Out.Add(ItemKind.IronOre);
     drill.Update(g, 0.016f);
-    Check("drill feeds east before rotating", east.Lane.Count == 1);
-    drill.Rotate(true);                          // Right -> Up
     drill.Out.Add(ItemKind.IronOre);
     drill.Update(g, 0.016f);
-    Check("rotated drill feeds the new edge", north.Lane.Count == 1 && east.Lane.Count == 1);
+    Check("drill round-robins adjacent output belts", north.Lane.Count == 1 && east.Lane.Count == 1);
+    drill.Rotate(true);                          // Right -> Up; item IO remains side-driven
+    Run(g, 1.5f);                                // make spacing on both belts
+    drill.Out.Add(ItemKind.IronOre);
+    drill.Update(g, 0.016f);
+    Check("rotating a machine no longer changes item IO", north.Lane.Count + east.Lane.Count == 3);
 }
 
 Section("BELT AUTO-CURVE");
@@ -1871,6 +1876,111 @@ Section("BELT AUTO-CURVE");
     sideFeed.Update(g, 1f);
     Check("side-entered item lands on the merge belt", merge.Lane.Count == 1);
     Check("side-entered item remembers its entry side", merge.Lane[0].Entry == Dir.Up);
+}
+
+Section("BELT INPUT ANIMATION & MERGE VARIANTS");
+{
+    var straight = Bal.BeltItemOffset(Dir.Right, null, null, 0f);
+    Check("straight belt item starts at the back edge",
+        MathF.Abs(straight.X + 0.5f) < 0.001f && MathF.Abs(straight.Y) < 0.001f);
+
+    var leftIn = Bal.BeltItemOffset(Dir.Right, null, Dir.Up, 0f);
+    Check("left-side entry starts on the left edge of travel",
+        MathF.Abs(leftIn.X) < 0.001f && MathF.Abs(leftIn.Y + 0.5f) < 0.001f);
+
+    var rightIn = Bal.BeltItemOffset(Dir.Right, null, Dir.Down, 0f);
+    Check("right-side entry starts on the right edge of travel",
+        MathF.Abs(rightIn.X) < 0.001f && MathF.Abs(rightIn.Y - 0.5f) < 0.001f);
+
+    var curveFallback = Bal.BeltItemOffset(Dir.Up, Dir.Left, null, 0f);
+    Check("curve fallback starts at the bend inlet",
+        MathF.Abs(curveFallback.X + 0.5f) < 0.001f && MathF.Abs(curveFallback.Y) < 0.001f);
+
+    var exitsFace = Bal.BeltItemOffset(Dir.Up, Dir.Left, Dir.Down, 1f);
+    Check("after midpoint items leave along the belt facing",
+        MathF.Abs(exitsFace.X) < 0.001f && MathF.Abs(exitsFace.Y + 0.5f) < 0.001f);
+
+    var entryWins = Bal.BeltItemOffset(Dir.Right, Dir.Up, Dir.Down, 0f);
+    Check("per-item entry wins over the belt curve fallback",
+        MathF.Abs(entryWins.X) < 0.001f && MathF.Abs(entryWins.Y - 0.5f) < 0.001f);
+
+    // entry metadata from actual belt transfers
+    var back = NewGame(110);
+    for (int x = 3; x <= 7; x++)
+        for (int y = 3; y <= 7; y++) back.World.SetTerrain(x, y, Terrain.Ground);
+    Place(back, BuildKind.Belt, 4, 5, Dir.Right);
+    Place(back, BuildKind.Belt, 5, 5, Dir.Right);
+    var backFeed = (Belt)back.World.Cell(4, 5).B!;
+    var backRecv = (Belt)back.World.Cell(5, 5).B!;
+    backFeed.Lane.Add(new BeltItem(ItemKind.IronOre, 0.999f));
+    backFeed.Update(back, 1f);
+    Check("back-fed belt keeps straight entry animation",
+        backRecv.Lane.Count == 1 && backRecv.Lane[0].Entry == null);
+
+    var north = NewGame(111);
+    for (int x = 3; x <= 7; x++)
+        for (int y = 3; y <= 7; y++) north.World.SetTerrain(x, y, Terrain.Ground);
+    Place(north, BuildKind.Belt, 5, 4, Dir.Down);
+    Place(north, BuildKind.Belt, 5, 5, Dir.Right);
+    var northFeed = (Belt)north.World.Cell(5, 4).B!;
+    var northRecv = (Belt)north.World.Cell(5, 5).B!;
+    northFeed.Lane.Add(new BeltItem(ItemKind.IronOre, 0.999f));
+    northFeed.Update(north, 1f);
+    Check("north feeder records an up-side entry",
+        northRecv.Lane.Count == 1 && northRecv.Lane[0].Entry == Dir.Up);
+
+    var south = NewGame(112);
+    for (int x = 3; x <= 7; x++)
+        for (int y = 3; y <= 7; y++) south.World.SetTerrain(x, y, Terrain.Ground);
+    Place(south, BuildKind.Belt, 5, 6, Dir.Up);
+    Place(south, BuildKind.Belt, 5, 5, Dir.Right);
+    var southFeed = (Belt)south.World.Cell(5, 6).B!;
+    var southRecv = (Belt)south.World.Cell(5, 5).B!;
+    southFeed.Lane.Add(new BeltItem(ItemKind.IronOre, 0.999f));
+    southFeed.Update(south, 1f);
+    Check("south feeder records a down-side entry",
+        southRecv.Lane.Count == 1 && southRecv.Lane[0].Entry == Dir.Down);
+
+    var front = NewGame(113);
+    for (int x = 3; x <= 7; x++)
+        for (int y = 3; y <= 7; y++) front.World.SetTerrain(x, y, Terrain.Ground);
+    Place(front, BuildKind.Belt, 6, 5, Dir.Left);
+    Place(front, BuildKind.Belt, 5, 5, Dir.Right);
+    var frontFeed = (Belt)front.World.Cell(6, 5).B!;
+    var frontRecv = (Belt)front.World.Cell(5, 5).B!;
+    frontFeed.Lane.Add(new BeltItem(ItemKind.IronOre, 0.999f));
+    frontFeed.Update(front, 1f);
+    Check("belt rejects items pushed into its front side",
+        frontRecv.Lane.Count == 0 && frontFeed.Lane.Count == 1);
+
+    // static merge variants used by the renderer: left-only, right-only, both.
+    var leftMask = NewGame(114);
+    for (int x = 3; x <= 7; x++)
+        for (int y = 3; y <= 7; y++) leftMask.World.SetTerrain(x, y, Terrain.Ground);
+    Place(leftMask, BuildKind.Belt, 5, 4, Dir.Down);
+    Place(leftMask, BuildKind.Belt, 5, 5, Dir.Right);
+    var leftMain = (Belt)leftMask.World.Cell(5, 5).B!;
+    Check("merge variant detects left-side input", leftMain.SideInputMask(leftMask) == Belt.SideLeftMask);
+
+    var rightMask = NewGame(115);
+    for (int x = 3; x <= 7; x++)
+        for (int y = 3; y <= 7; y++) rightMask.World.SetTerrain(x, y, Terrain.Ground);
+    Place(rightMask, BuildKind.Belt, 5, 6, Dir.Up);
+    Place(rightMask, BuildKind.Belt, 5, 5, Dir.Right);
+    var rightMain = (Belt)rightMask.World.Cell(5, 5).B!;
+    Check("merge variant detects right-side input", rightMain.SideInputMask(rightMask) == Belt.SideRightMask);
+
+    var bothMask = NewGame(116);
+    for (int x = 3; x <= 7; x++)
+        for (int y = 3; y <= 7; y++) bothMask.World.SetTerrain(x, y, Terrain.Ground);
+    Place(bothMask, BuildKind.Belt, 5, 4, Dir.Down);
+    Place(bothMask, BuildKind.Belt, 5, 6, Dir.Up);
+    Place(bothMask, BuildKind.Belt, 5, 5, Dir.Right);
+    var bothMain = (Belt)bothMask.World.Cell(5, 5).B!;
+    bothMain.Update(bothMask, 0.016f);
+    Check("merge variant detects both side inputs",
+        bothMain.SideInputMask(bothMask) == (Belt.SideLeftMask | Belt.SideRightMask));
+    Check("both-side input stays a merge instead of a curve", bothMain.BendIn == null);
 }
 
 Section("PAWN INVENTORY & TREE COLLECTIBLES");
@@ -2044,6 +2154,64 @@ Section("NEW MULTIBLOCKS");
     Run(g, 1f);      // let the power grid rebuild
     Check("substations wire together over a long span",
         g.GridOf(subs[0]) != null && g.GridOf(subs[0]) == g.GridOf(subs[1]));
+}
+
+
+Section("MINDUSTRY MACHINE IO");
+{
+    // A conveyor pointed INTO a machine is an input line; the machine must
+    // not dump output back into that conveyor's front side.
+    var g = NewGame(107);
+    for (int x = 3; x <= 9; x++)
+        for (int y = 3; y <= 8; y++) g.World.SetTerrain(x, y, Terrain.Ground);
+    for (int x = 5; x <= 6; x++)
+        for (int y = 5; y <= 6; y++) g.World.SetTerrain(x, y, Terrain.IronOre);
+    Place(g, BuildKind.Drill, 5, 5, Dir.Right);
+    Place(g, BuildKind.Belt, 4, 5, Dir.Right);      // flows east, into the drill
+    var drill = (Drill)g.World.Cell(5, 5).B!;
+    var inputBelt = (Belt)g.World.Cell(4, 5).B!;
+    drill.Out.Add(ItemKind.IronOre);
+    drill.Update(g, 0.016f);
+    Check("machine does not dump into a conveyor facing back at it",
+        inputBelt.Lane.Count == 0 && drill.Out.Count == 1);
+
+    // A conveyor pointed AWAY from any side becomes an output point.
+    Place(g, BuildKind.Belt, 7, 5, Dir.Right);      // east side, flowing away
+    var outBelt = (Belt)g.World.Cell(7, 5).B!;
+    drill.Update(g, 0.016f);
+    Check("any adjacent outgoing conveyor can be a machine output",
+        outBelt.Lane.Count == 1 && drill.Out.Count == 0);
+
+    // Production blocks can dump directly into another production/storage
+    // block if that neighbor accepts the item, just like Mindustry adjacency.
+    var g2 = NewGame(108);
+    for (int x = 4; x <= 8; x++)
+        for (int y = 4; y <= 6; y++) g2.World.SetTerrain(x, y, Terrain.Ground);
+    Place(g2, BuildKind.Smelter, 5, 5, Dir.Right);
+    Place(g2, BuildKind.Fabricator, 6, 5, Dir.Right);
+    var sm = (Smelter)g2.World.Cell(5, 5).B!;
+    var fab = (Fabricator)g2.World.Cell(6, 5).B!;
+    sm.Out.Add(ItemKind.IronPlate);
+    sm.Update(g2, 0.016f);
+    Check("machines can output directly into adjacent machines",
+        fab.In.GetValueOrDefault(ItemKind.IronPlate) == 1 && sm.Out.Count == 0);
+
+    // Two output belts touching the same machine split items round-robin.
+    var g3 = NewGame(109);
+    for (int x = 4; x <= 8; x++)
+        for (int y = 4; y <= 6; y++) g3.World.SetTerrain(x, y, Terrain.Ground);
+    Place(g3, BuildKind.Smelter, 6, 5, Dir.Right);
+    Place(g3, BuildKind.Belt, 7, 5, Dir.Right);
+    Place(g3, BuildKind.Belt, 5, 5, Dir.Left);
+    var sm2 = (Smelter)g3.World.Cell(6, 5).B!;
+    var right = (Belt)g3.World.Cell(7, 5).B!;
+    var left = (Belt)g3.World.Cell(5, 5).B!;
+    sm2.Out.Add(ItemKind.IronPlate);
+    sm2.Update(g3, 0.016f);
+    sm2.Out.Add(ItemKind.IronPlate);
+    sm2.Update(g3, 0.016f);
+    Check("machine output is round-robin across accepting sides",
+        right.Lane.Count == 1 && left.Lane.Count == 1);
 }
 
 

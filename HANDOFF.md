@@ -22,12 +22,12 @@ Hard technical identity — do not fight these:
   PNG in `assets/` (auto-exported templates on first run). Supports hi-res
   (192px stays native, bilinear downscale), frame strips, per-direction
   files, and Minecraft-style gray-template tinting.
-- **Headless sim tests** (`SimTests` project) — 316 checks, no GDI+.
+- **Headless sim tests** (`SimTests` project) — 334 checks in this branch (316 v0.0.64 baseline + conveyor IO tests), no GDI+.
 - Single solution: `ForgeHavenPrototype.sln`
   - `src/ForgeHaven/` — the game
   - `src/SimTests/` — the test suite (top-level statements, runs green in ~10s)
 
-Current baseline: **v0.0.64, build 0 errors / 0 warnings, SimTests 316/316.**
+Previous stable baseline: **v0.0.64, build 0 errors / 0 warnings, SimTests 316/316.** This branch adds conveyor IO tests; expect 334 checks once the SDK is available.
 
 ---
 
@@ -110,15 +110,15 @@ only the test suite. Known traps:
 |---|---|
 | `Types.cs` | All enums (**append-only — save compat!**), `Bal` constants (costs, footprints, power, all tunables), `DirU` helpers, `MineOrder`, `ItemPile`, `DirFromDelta`, palette color helpers |
 | `Units.cs` | `CmdType` (command queue enum), `SimCmd`, `Trader`, enemies/beasts units |
-| `Buildings.cs` | `Building` base (`Create` factory, `Rotate`, `W/H` footprint, virtual `WireRange`/`CoverRange`), `Belt` (+`BendIn`, `DeriveBend` auto-curve, `BeltItem.Entry`), `Inserter` (state machine: `Phase/Arm/Held/Filter`, `Reach`), `LongInserter`, splitters/junction/merger, `MachineBase` (In/Out buffers, edge-output `TryPushOut`, `HaulNeeds`), `Drill`/`DeepDrill`/`BlastDrill`, `Smelter`/`IndustrialFurnace`/`PrimitiveFurnace`, `StorageCrate`/`StorageSilo`, `Assembler`, `Greenhouse`, `Substation`, `PowerPole` (unsealed on purpose), `TrainStop`, `DronePort`, turrets, etc. |
+| `Buildings.cs` | `Building` base (`Create` factory, `Rotate`, `W/H` footprint, virtual `WireRange`/`CoverRange`), `Belt` (+`BendIn`, `DeriveBend` auto-curve, `BeltItem.Entry`), `Inserter` (state machine: `Phase/Arm/Held/Filter`, `Reach`), `LongInserter`, splitters/junction/merger, `MachineBase` (In/Out buffers, Mindustry-style adjacent round-robin `TryPushOut`, `HaulNeeds`), `Drill`/`DeepDrill`/`BlastDrill`, `Smelter`/`IndustrialFurnace`/`PrimitiveFurnace`, `StorageCrate`/`StorageSilo`, `Assembler`, `Greenhouse`, `Substation`, `PowerPole` (unsealed on purpose), `TrainStop`, `DronePort`, turrets, etc. |
 | `Colonist.cs` | Pawn sim: needs/mood, all `ColState` states (incl. `GoFetch`/`GoDeliver`), pawn inventory (`CarryKind`/`CarryN`, `Take`, `StartDeliver`, `StartHaul`), manual mining/gathering into inventory, death cargo-drop, `DeriveCosmetics` (name-hash tones incl. `BeltTone`) |
 | `Game.cs` | `TryPlace` (footprint + terrain rules + material payment), job assigners (`AssignMiners/Gatherers/Repairers/Haulers`, `FreeHauler`), stockpile zones (`PileZones`/`PileCells`, `Toggle/Deposit/NearestStockpileCell`), `DropPile`, `ItemOfTerrain`, power grids (`RebuildGrids` — union-find over poles/hub with per-node ranges), full save/load DTO mapping |
-| `Renderer.cs` | `Camera`, terrain chunk cache (LOD, fog-gated), `DrawTileContent`, `DrawBuildings` (per-building branches, deferred item z-pass, belt frames/curves/merge overlays), `DrawPilesAndZones`, `DrawTrees` (fog-culled, detail cutoff), pawn draw (bilinear, shoulder cargo bundle), animated inserter arm, `DrawPortMarker` (live facing-edge port), `DrawSpriteSmart`/`DrawBuildingSprite` (hi-res-aware filtering), hover tooltips + Alt cards |
+| `Renderer.cs` | `Camera`, terrain chunk cache (LOD, fog-gated), `DrawTileContent`, `DrawBuildings` (per-building branches, deferred item z-pass, belt frames/curves/merge overlays), `DrawPilesAndZones`, `DrawTrees` (fog-culled, detail cutoff), pawn draw (bilinear, shoulder cargo bundle), animated inserter arm, no fixed machine item port, `DrawSpriteSmart`/`DrawBuildingSprite` (hi-res-aware filtering), hover tooltips + Alt cards |
 | `Sprites.cs` | `S = 36` px/tile. All procedural bakes, asset loading (`TryAsset` native hi-res, `TryStrip` frame strips, `ApplyDirSet`), pawn gray-template tinting (`ApplyTones` + magic keys), belt/curve frame bakes, multiblock bakes at native size (2S, 3S), auto-export of templates to `assets/` (only-if-missing) |
 | `MainForm.cs` | Input & UI: tool bar (build/bulldoze/mine/▦ stockpile), drag-paint with belt drag-rotation + corner curves, **R = rotate hovered building** (priority: drafted colonist > hovered building > tool facing; Shift = CCW), speed `,`/`.`, autosave (3 rotating slots), crash-landing cinematic (6.0 s), worldgen screen with sliders |
 | `Persistence.cs` | `Settings` + `GameSave` DTOs (schema `Version = 4`), save file discovery |
 | `UiTypes.cs` | `ViewState` (incl. `PileFrom`/`PileTo` preview), UI button/layout types |
-| `SimTests/TestMain.cs` | 316 checks, top-level statements, `Section`/`Check` helpers |
+| `SimTests/TestMain.cs` | 334 checks currently (316 baseline + conveyor IO tests), top-level statements, `Section`/`Check` helpers |
 | `DELIVERY.md` / `ROADMAP.md` | Session changelog / idea bank v3 (20 rated ideas) |
 | `assets/` | User's art overrides + auto-exported templates (see §3) |
 
@@ -126,17 +126,22 @@ only the test suite. Known traps:
 
 ## 6. CORE SYSTEM RULES (the invariants)
 
-- **Multiblock output**: machines push from EVERY tile of the facing
-  footprint edge, first accept wins. The port marker draws on the facing
-  edge. Footprints come from `Bal.FootW/FootH` (IndustrialFurnace is 2x3,
-  the first non-square).
+- **Mindustry-style machine IO**: production/mining blocks have no fixed
+  item input/output ports. Every tile touching the footprint can be input or
+  output; conveyors decide by direction (they reject their front side) and
+  machines round-robin across accepting adjacent belts/buildings. Footprints
+  come from `Bal.FootW/FootH` (IndustrialFurnace is 2x3, the first
+  non-square).
 - **Belt auto-curving**: `Belt.DeriveBend` runs each tick — exactly one
   perpendicular feeder + no back feeder ⇒ the belt renders/simulates as a
   curve (Mindustry-style). Drag-painting corners sets `BendIn` too; R-rotate
   turns curve inlet+outlet together.
-- **Belt items**: enter from the side they arrived (`BeltItem.Entry`), drawn
-  inlet→center→outlet on curves. All belt/junction items draw in a second
-  pass AFTER all buildings (z-order fix).
+- **Belt items + merge variants**: items carry the exact side they arrived
+  from (`BeltItem.Entry`). `Bal.BeltItemOffset` draws entry edge → center →
+  facing edge, with Entry taking priority over `BendIn` so left/right/both
+  side merges animate honestly. Straight belts render left-only, right-only
+  or both-side merge overlays. All belt/junction items draw in a second pass
+  AFTER all buildings (z-order fix).
 - **Pawn inventory**: 12 units, ONE item type per trip (`PawnCarryCap`).
   Manual mining, tree felling (trees are collectibles — drills reject
   forest), carcass gathering all ride in inventory to hub/stockpile. Full
@@ -243,7 +248,7 @@ only the test suite. Known traps:
 ```
 # 1. SDK (see §4 if missing)
 dotnet build ForgeHavenPrototype.sln -c Release   # expect 0 errors, 0 warnings
-dotnet run --project src/SimTests -c Release      # expect: 316 passed, 0 failed
+dotnet run --project src/SimTests -c Release      # expect: 334 passed, 0 failed
 rm -rf src/ForgeHaven/{bin,obj} src/SimTests/{bin,obj}
 ```
 

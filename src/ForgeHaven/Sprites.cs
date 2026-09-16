@@ -564,7 +564,7 @@ public static class Sprites
         "            science_pack, drone, warbot   (belt cargo + stock panel)\n" +
         "  units/pawns/ shadow.png, body_s0..5.png, head_sk0..3_<direction>.png,\n" +
         "              hair_h0..5_<direction>.png, face_<direction>.png\n\n" +
-        "Directional convention: RIGHT = output/facing side. Light comes from\n" +
+        "Directional convention for belts/rails/arms: RIGHT = facing side. Light comes from\n" +
         "the top-left (NW) in the baked art.\n";
 
     private static Bitmap Blank()
@@ -984,8 +984,8 @@ public static class Sprites
             using (var bolt = new SolidBrush(Pal.C(70, 62, 50)))
                 foreach (var (bx, by) in new[] { (5, 5), (W - 8, 5), (5, W - 8), (W - 8, W - 8) })
                     g.FillRectangle(bolt, bx, by, 3, 3);
-            // (output port is drawn dynamically on the FACING edge by the
-            // renderer - a baked port would lie about where items exit)
+            // no baked item port: Mindustry-style IO is decided by the
+            // adjacent belts/buildings, not a machine-side marker
             // gantry to the center
             using (var p = new Pen(Pal.C(45, 40, 34), 3f))
             {

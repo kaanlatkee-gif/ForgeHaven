@@ -763,21 +763,17 @@ public static class Renderer
                     frames = b is FastBelt ? Sprites.FastBeltFrames[bface] : Sprites.BeltFrames[bface];
                 DrawSpriteSmart(g, frames[(int)(_beltClock / 130 % frames.Length)], dest);
 
-                // MINDUSTRY-STYLE MERGE: straight belts only — a curve
-                // already shows the flow turning in
+                // MINDUSTRY-STYLE MERGE VARIANTS: straight belts can show
+                // left-only, right-only, or both-side feeders. A true curve
+                // already shows its single side input by using the curve frame.
                 if (belt.BendIn == null)
-                    for (int s = 0; s < 4; s++)
-                    {
-                        if (s == bface || s == (bface + 2) % 4) continue;    // front / back chain
-                        int nx = belt.X + DirU.Dx[s], ny = belt.Y + DirU.Dy[s];
-                        if (!game.World.InBounds(nx, ny)) continue;
-                        if (game.World.Cell(nx, ny).B is Belt ob && (int)ob.Face == (s + 2) % 4)
-                        {
-                            int cross = DirU.Dx[bface] * DirU.Dy[s] - DirU.Dy[bface] * DirU.Dx[s];
-                            g.DrawImage(Sprites.BeltMerge[cross < 0 ? 0 : 1, bface], dest);
-                            break;
-                        }
-                    }
+                {
+                    int mask = belt.SideInputMask(game);
+                    if ((mask & Belt.SideLeftMask) != 0)
+                        DrawSpriteSmart(g, Sprites.BeltMerge[0, bface], dest);
+                    if ((mask & Belt.SideRightMask) != 0)
+                        DrawSpriteSmart(g, Sprites.BeltMerge[1, bface], dest);
+                }
 
                 itemPass.Add((belt.Lane, belt.X, belt.Y, belt.Face, belt.BendIn));
                 continue;
@@ -964,10 +960,8 @@ public static class Renderer
 
             DrawBuildingSprite(g, b, dest);
 
-            // live output port on the FACING edge - the art never lies
-            // about where items exit (machines only, not towers)
-            if (b is MachineBase and not Watchtower)
-                DrawPortMarker(g, b, dest);
+            // Mindustry-style item IO has no fixed machine port now:
+            // adjacent belts/buildings define input vs output by what they accept.
 
             if (b is WindTurbine)
             {
@@ -1108,24 +1102,6 @@ public static class Renderer
         }
     }
 
-    /// <summary>Multiblock machines: bright port chip on the middle of the
-    /// facing edge, matching the edge-output rule.</summary>
-    private static void DrawPortMarker(Graphics g, Building b, Rectangle dest)
-    {
-        int cx = dest.X, cy = dest.Y, cw = 4, ch = 4;
-        switch (b.Face)
-        {
-            case Dir.Right: cx = dest.Right - 4; cy = dest.Y + dest.Height / 2 - 2; ch = 8; break;
-            case Dir.Left:  cx = dest.X;          cy = dest.Y + dest.Height / 2 - 2; ch = 8; break;
-            case Dir.Down:  cy = dest.Bottom - 4; cx = dest.X + dest.Width / 2 - 2; cw = 8; break;
-            default:        cy = dest.Y;          cx = dest.X + dest.Width / 2 - 2; cw = 8; break;
-        }
-        using var br = new SolidBrush(Pal.C(240, 200, 90));
-        g.FillRectangle(br, cx, cy, cw, ch);
-        using var pn = new Pen(Pal.C(60, 50, 30));
-        g.DrawRectangle(pn, cx, cy, cw, ch);
-    }
-
     private static void DrawFacingTick(Graphics g, Building b, float sz)
     {
         var c = Camera.S(b.X + 0.5f, b.Y + 0.5f);
@@ -1183,15 +1159,14 @@ public static class Renderer
 
     private static void DrawBeltItems(Graphics g, List<BeltItem> lane, int bx, int by, Dir face, Dir? bend, float sz)
     {
-        int fx = DirU.Dx[(int)face], fy = DirU.Dy[(int)face];
         foreach (var it in lane)
         {
-            // curve path - or a side-entered item sliding in from where
-            // it came - until mid-tile, then along the facing
-            Dir? entry = bend ?? it.Entry;
-            int dx = fx, dy = fy;
-            if (it.Prog < 0.5f && entry is Dir ein) { dx = DirU.Dx[(int)ein]; dy = DirU.Dy[(int)ein]; }
-            DrawItemDot(g, bx + 0.5f + dx * (it.Prog - 0.5f), by + 0.5f + dy * (it.Prog - 0.5f), it.Kind, sz);
+            // Correct entry animation: start at the actual side the item came
+            // from, arrive at center halfway, then leave along the belt face.
+            // Per-item Entry wins over BendIn so both-side merge belts don't
+            // force every item through the same side animation.
+            var off = Bal.BeltItemOffset(face, bend, it.Entry, it.Prog);
+            DrawItemDot(g, bx + 0.5f + off.X, by + 0.5f + off.Y, it.Kind, sz);
         }
     }
 
@@ -3408,7 +3383,7 @@ public static class Renderer
             "",
             "PAN WASD/arrows/middle-drag   ZOOM wheel   SPEED , .   PAUSE space",
             "BUILD Architect bar (bottom) or 1-5; drag paints belts/rails/pipes",
-            "ROTATE R (ghost chevron shows output)   BULLDOZE X (50% refund)",
+            "ROTATE R (belt/arm direction)   BULLDOZE X (50% refund)",
             "INSPECT hover; ALT = detail card   SELECT click (raiders too!)",
             "VIEWS F1 power · F2 defense · F3 logistics · F4 pollution",
             "RESEARCH T   WORK PRIORITIES P   MINIMAP M   MENU Esc",

@@ -181,11 +181,14 @@ public class Belt : Building
 
     public override bool AcceptItem(Game g, ItemKind k, Dir fromDir)
     {
-        // perpendicular deliveries remember where they came from so the
-        // item slides in from that side instead of popping up at the start
-        int f = (int)Face, s = (int)fromDir;
-        bool perp = s != f && s != (f + 2) % 4;
-        return TryReceive(k, perp ? DirU.Opposite(fromDir) : null);
+        // MINDUSTRY IO: conveyors define whether an adjacent machine side is
+        // input or output. A belt accepts from behind or from either side,
+        // but rejects items dumped into its FRONT (that would flow straight
+        // back into the source block and clog/loop). Side deliveries remember
+        // where they came from so the item visibly slides in.
+        if (fromDir == DirU.Opposite(Face)) return false;
+        bool side = fromDir != Face;
+        return TryReceive(k, side ? DirU.Opposite(fromDir) : null);
     }
 
     public override void Update(Game g, float dt)
@@ -203,6 +206,33 @@ public class Belt : Building
             if (b.AcceptItem(g, Lane[0].Kind, Face))
                 Lane.RemoveAt(0);
         }
+    }
+
+    public const int SideLeftMask = 1;
+    public const int SideRightMask = 2;
+
+    public static int SideMaskFor(Dir face, Dir side)
+    {
+        int f = (int)face, s = (int)side;
+        int cross = DirU.Dx[f] * DirU.Dy[s] - DirU.Dy[f] * DirU.Dx[s];
+        return cross < 0 ? SideLeftMask : SideRightMask;
+    }
+
+    /// <summary>Which perpendicular conveyor feeds touch this belt: bit 1 =
+    /// left of travel, bit 2 = right of travel. Used for the straight merge
+    /// variants: left-only, right-only, or both sides.</summary>
+    public int SideInputMask(Game g)
+    {
+        int f = (int)Face, mask = 0;
+        for (int s = 0; s < 4; s++)
+        {
+            if (s == f || s == (f + 2) % 4) continue;
+            int nx = X + DirU.Dx[s], ny = Y + DirU.Dy[s];
+            if (!g.World.InBounds(nx, ny)) continue;
+            if (g.World.Cell(nx, ny).B is Belt ob && (int)ob.Face == (s + 2) % 4)
+                mask |= SideMaskFor(Face, (Dir)s);
+        }
+        return mask;
     }
 
     /// <summary>MINDUSTRY AUTO-CURVE: a belt with exactly ONE perpendicular
@@ -686,6 +716,7 @@ public abstract class MachineBase : Building
     public Colonist? Operator;
     public float Wear;                          // ORGANISM: 0..100 use fatigue
     public bool BrokenDown;                     // ORGANISM: stopped until repaired
+    private int _dumpCursor;                    // MINDUSTRY IO: round-robin adjacent outputs
 
     public virtual float CraftTime => 3f;
     public virtual bool NeedsWorker => true;
@@ -760,25 +791,40 @@ public abstract class MachineBase : Building
     protected void TryPushOut(Game g)
     {
         if (Out.Count == 0) return;
-        // EDGE OUTPUT: try EVERY tile of the facing footprint edge in order
-        // - a belt anywhere along the edge works (Mindustry behavior, and
-        // the only honest rule for even-sized edges that have no middle).
-        int tx0 = X, ty0 = Y, dx = 1, dy = 0, n = W;
-        switch (Face)
+
+        // MINDUSTRY IO: production/mining blocks have no fixed item port.
+        // Every tile touching the footprint can be input OR output; the
+        // adjacent transport/building decides whether it can accept the item.
+        // Valid outputs are attempted round-robin so two belts touching the
+        // same machine split production instead of one side starving.
+        var targets = new List<(Building b, Dir fromDir)>();
+        var seen = new HashSet<Building>();
+
+        void AddTarget(int tx, int ty, Dir fromDir)
         {
-            case Dir.Right: tx0 = X + W; ty0 = Y;         dx = 0; dy = 1; n = H; break;
-            case Dir.Left:  tx0 = X - 1; ty0 = Y;         dx = 0; dy = 1; n = H; break;
-            case Dir.Down:  tx0 = X;    ty0 = Y + H;      dx = 1; dy = 0; n = W; break;
-            case Dir.Up:    tx0 = X;    ty0 = Y - 1;      dx = 1; dy = 0; n = W; break;
-        }
-        for (int i = 0; i < n; i++)
-        {
-            int tx = tx0 + dx * i, ty = ty0 + dy * i;
-            if (!g.World.InBounds(tx, ty)) continue;
+            if (!g.World.InBounds(tx, ty)) return;
             var b = g.World.Cell(tx, ty).B;
-            if (b != null && b != this && b.AcceptItem(g, Out[0], Face))
+            if (b == null || b == this || !seen.Add(b)) return;
+            targets.Add((b, fromDir));
+        }
+
+        for (int x = X; x < X + W; x++) AddTarget(x, Y - 1, Dir.Up);
+        for (int y = Y; y < Y + H; y++) AddTarget(X + W, y, Dir.Right);
+        for (int x = X; x < X + W; x++) AddTarget(x, Y + H, Dir.Down);
+        for (int y = Y; y < Y + H; y++) AddTarget(X - 1, y, Dir.Left);
+
+        if (targets.Count == 0) return;
+        if (_dumpCursor >= targets.Count) _dumpCursor %= targets.Count;
+
+        int start = _dumpCursor;
+        for (int i = 0; i < targets.Count; i++)
+        {
+            int idx = (start + i) % targets.Count;
+            var (b, fromDir) = targets[idx];
+            if (b.AcceptItem(g, Out[0], fromDir))
             {
                 Out.RemoveAt(0);
+                _dumpCursor = (idx + 1) % targets.Count;
                 return;
             }
         }
