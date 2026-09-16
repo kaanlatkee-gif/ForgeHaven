@@ -1,0 +1,193 @@
+# ForgeHaven Suggestions
+
+Saved for later builds from the feature-ideation pass. These are backlog ideas only; not all should be implemented at once.
+
+## Internet-inspired feature categories
+
+### 1. Logistics & Automation
+1. Logistics clarity overlay showing item flow direction, throughput, and stuck lanes.
+2. Placement preview arrows for every belt, machine, inserter, pipe, and station IO side.
+3. Priority splitter with configurable primary and overflow exits.
+4. Smart sorter/filter splitter with whitelist, blacklist, and wildcard modes.
+5. Lane balancer that equalizes two or three conveyor lines.
+6. Underground or bridge belts for compact line crossings.
+7. Elevated belts/rails that can pass over ground logistics without mixing.
+8. Junction blocks with visible per-lane buffers.
+9. Belt throughput tiers with visually distinct speeds and animation.
+10. Inserter variants: fast, long, filter, stack, and low-power emergency arm.
+11. Logistic drones with pickup/drop rules, repair tasks, and charging limits.
+12. Train scheduling UI with route names, station conditions, and cargo filters.
+13. Loader/unloader station blocks for high-volume rail transfer.
+14. Storage priorities: input-only, output-only, buffer, requester, provider.
+15. Item overflow alarms and flashing blocked-belt indicators.
+16. Circuit/logic network for enabling machines from sensors and stock counts.
+17. Conveyor counters and rate displays for debugging factories.
+18. Blueprint copy/paste for repeated production cells.
+19. Construction ghost planning with material reservation.
+20. Automatic deconstruction planner for obsolete logistics sections.
+
+### 2. Production & Industry
+1. Multi-stage recipes with clear ingredient chains and byproducts.
+2. Machine modules for speed, efficiency, productivity, and pollution reduction.
+3. Maintenance parts and wear so large factories need upkeep logistics.
+4. Slag/recycling chain that turns waste into stone, metals, or landfill.
+5. Parallel recipe machines with visible selected recipe labels.
+6. Low-tech manual fallback stations for anti-softlock recovery.
+7. Batch crafting queues for fabricators and assemblers.
+8. Quality tiers for advanced parts or weapons.
+9. Dedicated foundries for iron, copper, alloys, and crystal composites.
+10. Cooling/lubricant requirements for high-tier machines.
+11. Production graph screen with bottleneck and surplus summaries.
+12. Machine status lights: missing input, output full, no power, no worker.
+13. Overclocking that trades speed for heat, wear, or power draw.
+14. Recipe unlock tree that changes layouts instead of only raising numbers.
+15. Mining productivity research with diminishing returns.
+16. Deep-core/resource scanning progression.
+17. Dedicated ammo production lines with ammo type variants.
+18. Food processing tiers from raw biomass/crops into meals and rations.
+19. Robotics chain: drone frames, circuits, batteries, final bots.
+20. Late-game ark repair chain using rare crystals and advanced parts.
+
+### 3. Power, Fluids & Environment
+1. Power overlay with generation, demand, battery buffer, and brownout causes.
+2. Separate electric grids that can be connected/disconnected deliberately.
+3. Transformers/substations with larger coverage and overload warnings.
+4. Battery priorities and emergency reserve settings.
+5. Steam power loop: pump, pipe, boiler, engine, condenser.
+6. Fluid overlay with flow direction, pressure, contents, and blocked segments.
+7. Tanks with content gauges and priority output settings.
+8. Water scarcity/seasonal drought pressure.
+9. Weather that affects solar, wind, crops, visibility, and raids.
+10. Pollution cloud with flora absorption and enemy-aggression effects.
+11. Cleaner machines or scrubbers as late-game mitigation.
+12. Heat mechanics for furnaces, boilers, reactors, and cooling systems.
+13. Pipe bridges and valves for controllable fluid networks.
+14. Sensors for fluid amount, battery charge, sunlight, wind, and pollution.
+15. Reactor risk/reward events: leak, meltdown warning, emergency shutdown.
+16. Wind turbine spacing efficiency.
+17. Solar panel day/night production graph.
+18. Terrain water management: canals, floodgates, irrigation, dams.
+19. Biome-specific energy modifiers.
+20. Environmental restoration projects that reclaim blighted ground.
+
+### 4. Defense & Combat
+1. Raid forecast panel showing approximate direction, size, and threat type.
+2. Enemy roles: bruiser, ranged raider, sapper, shielded unit, beast swarm.
+3. Sappers that target weak walls and power infrastructure.
+4. Turret ammo logistics with magazine status and belt-fed reloads.
+5. Ammo variants: piercing, incendiary, stun, explosive, cheap scrap rounds.
+6. Kill-corridor support blocks: gates, traps, lights, barricades.
+7. Repair projector or post-raid repair planner.
+8. Colonist draft controls and defensive rally points.
+9. Watchtowers requiring operators but no ammo.
+10. Guard bot patrol routes and rally commands.
+11. Shield generators with visible bubble health and recharge delay.
+12. Enemy learning that punishes repeated killbox layouts.
+13. Night-raid accuracy penalties reduced by lamps/searchlights.
+14. Prisoner capture, medical stabilization, recruitment, or ransom.
+15. Wildlife threats that can panic, stampede, or be hunted.
+16. Boss/apex raider waves as chapter milestones.
+17. Minefields/IEDs with friendly-fire risk.
+18. Alarm states that change work priorities during attacks.
+19. Fortification materials with tradeoffs: wood, stone, metal, composite.
+20. Combat log and damage heatmap after each raid.
+
+### 5. Colony, Pawns & Social Life
+1. Detailed colonist needs: food, rest, safety, comfort, light, social contact.
+2. Work priorities per colonist and per work type.
+3. Passions/traits that affect speed, mood, and combat behavior.
+4. Relationships: friends, rivals, family bonds, grief, romance.
+5. Mental breaks: dazed wandering, tantrums, berserk panic, catharsis after recovery.
+6. Proper dining areas with table/chair morale bonuses.
+7. Bedrooms/habs with quality and industry-noise penalties.
+8. Medical triage, tending quality, infection, prosthetics, and recovery beds.
+9. Prisoner rooms and recruitment interactions.
+10. Skill XP and specialization over time.
+11. Outfit/equipment loadouts for work or combat roles.
+12. Morale auras from gardens, lamps, memorials, mess halls, temples, libraries.
+13. Social events: ceremonies, feasts, funerals, arguments, celebrations.
+14. Visitors, traders, migrants, refugees, and quest pawns.
+15. Assignable schedules: sleep, recreation, work, emergency shift.
+16. Colonist stance defaults: flee, fight, ignore danger.
+17. Rescue/carry system for downed colonists.
+18. Personal vows or backstories that create mini-goals.
+19. Education/training room for improving weak skills.
+20. Population pressure: more mouths and bedrooms versus more labor.
+
+### 6. World, Exploration & Progression
+1. Generated world map with named regions, factions, biomes, and danger levels.
+2. Expedition parties that leave the base to salvage, trade, scout, or hunt.
+3. Fog-of-war scanning and sensor towers.
+4. Ruins with loot, hazards, lore, and mini-events.
+5. Ark interior reconstruction as a chapter objective.
+6. Blight spread/retreat layer across map chunks.
+7. Biome modifiers: verdant, volcanic, glacial, fungal, desert, toxic marsh.
+8. Sector campaign progression where old bases support new landing sites.
+9. Storyteller difficulty personalities for event pacing.
+10. Orders/quests from distant survivors or hostile factions.
+11. Reputation with traders, refugees, raiders, and remnants.
+12. Rare resource nodes that require rail or expedition logistics.
+13. World-map transport routes for trains, caravans, drones, or shuttles.
+14. Ancient megamachines that can be restored or dismantled.
+15. Victory choices: repair ark, settle permanently, signal home, cleanse planet.
+16. Randomized tech starts and crash-site loadouts.
+17. Seasonal events: storms, drought, migration, ashfall, blight bloom.
+18. Unlockable blueprints from data cores rather than only science packs.
+19. Map landmarks that affect local rules.
+20. Endgame retaliation after activating the ark beacon.
+
+### 7. UI, UX & Quality of Life
+1. Stronger industrial terminal/ark-interface visual style pass.
+2. Why-stopped tooltip for machines and colonists.
+3. Build menu search, filters, favorites, and recently used tools.
+4. Recipe inspector showing full input/output chains.
+5. Hover throughput numbers on belts, pipes, machines, and power poles.
+6. Warning badges that are specific, actionable, and clickable.
+7. Copy settings between machines, splitters, stations, and storage.
+8. Drag-build belts, pipes, walls, rails, power poles, and ghost plans.
+9. Rotate/flip blueprint tools.
+10. Mass upgrade planner for belts, inserters, machines, and walls.
+11. Toggle overlays for power, logistics, defense, pollution, fluids, rooms, work.
+12. Minimap with alerts and expedition markers.
+13. Event log filters and pause-on-danger options.
+14. Graphs for power, item stocks, production, raids, wealth, and morale.
+15. Better onboarding checklist for first food, power, plates, ammo, defenses.
+16. Colorblind-safe palettes and icon shapes beyond color coding.
+17. Scalable UI and readable fonts at multiple resolutions.
+18. Clear save/load metadata with colony day, biome, difficulty, screenshot.
+19. Debug/creative tools gated behind a dev toggle.
+20. Mod/data hooks for custom recipes, items, sprites, and localizations.
+
+## Separate ForgeHaven-specific ideas
+1. Ark interior reconstruction: rebuild rooms inside the crashed colony ship for permanent upgrades.
+2. Hope vs Blight meter: optimism and planetary corruption pull against each other.
+3. Survivor vows: each colonist carries a personal promise that creates side objectives.
+4. Ark memory fragments: recovered data unlocks lore, recipes, and moral choices.
+5. Blight biology production chain: study hostile flora to craft medicine, fuel, or weapons.
+6. Colony charter: player-written priorities shape morale expectations and event outcomes.
+7. Ruined megamachine: a map-spanning industrial relic to power, dismantle, or awaken.
+8. Enemy learning: raiders adapt to overused paths, walls, traps, and turret nests.
+9. Heroic last stand system: doomed colonists can buy time with powerful final actions.
+10. Signal-home consequences: calling for rescue also attracts something listening.
+11. Ark ghosts UI: old crew recordings annotate buildings and warn about mistakes.
+12. Industrial scars: heavy mining permanently changes terrain, water, and enemy behavior.
+13. Found family bonuses: social bonds unlock team work-speed or combat-defense boosts.
+14. Settlement laws: rationing, curfew, open-door hospitality, prisoner policy, risk posture.
+15. Named production lines: players can label factories and see line health at a glance.
+16. Blight storms: temporary map events that mutate wildlife and clog machines with spores.
+17. Memory-powered research: choose between preserving history or consuming data for tech.
+18. Rescue beacons: side objectives to bring in survivors, traders, or hostile infiltrators.
+19. Ark hull plating resource: limited crash-site material for unique defenses and machines.
+20. Ending divergence: leave, cleanse, rule, merge with the ark AI, or become the new warning.
+
+## Suggested near-term priorities
+1. Logistics clarity overlay.
+2. Why-stopped tooltip.
+3. Placement preview IO arrows.
+4. Priority splitter / smart sorter polish.
+5. Production graphs.
+6. Machine maintenance parts.
+7. Repair projector or post-raid repair planner.
+8. Ark interior reconstruction.
+9. Expedition parties.
+10. Industrial terminal / Ark-interface GUI style pass.

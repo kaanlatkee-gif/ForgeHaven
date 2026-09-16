@@ -594,12 +594,16 @@ public static class Sprites
 
     private static void Noise(Bitmap b, int seed, int amount)
     {
+        // Old sprites had full-screen salt-and-pepper noise. This keeps the
+        // useful hand-made grit but makes it intermittent and low contrast.
+        if (amount <= 0) return;
         var r = new Random(seed);
+        int chance = Math.Clamp(22 + amount * 3, 22, 46);
         for (int y = 0; y < b.Height; y++)
             for (int x = 0; x < b.Width; x++)
             {
                 var c = b.GetPixel(x, y);
-                if (c.A == 0) continue;
+                if (c.A < 24 || r.Next(100) > chance) continue;
                 int n = r.Next(-amount, amount + 1);
                 b.SetPixel(x, y, Color.FromArgb(c.A,
                     Math.Clamp(c.R + n, 0, 255), Math.Clamp(c.G + n, 0, 255), Math.Clamp(c.B + n, 0, 255)));
@@ -613,61 +617,266 @@ public static class Sprites
             g.FillRectangle(br, r.Next(2, S - size - 1), r.Next(2, S - size - 1), size, size);
     }
 
+    private static Color Mix(Color a, Color b, float t)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        return Pal.C(
+            (int)(a.R + (b.R - a.R) * t),
+            (int)(a.G + (b.G - a.G) * t),
+            (int)(a.B + (b.B - a.B) * t));
+    }
+
+    private static Color WithA(Color c, int a) => Color.FromArgb(a, c.R, c.G, c.B);
+
+    private static GraphicsPath RoundRect(float x, float y, float w, float h, float r)
+    {
+        var p = new GraphicsPath();
+        float d = r * 2f;
+        p.AddArc(x, y, d, d, 180, 90);
+        p.AddArc(x + w - d, y, d, d, 270, 90);
+        p.AddArc(x + w - d, y + h - d, d, d, 0, 90);
+        p.AddArc(x, y + h - d, d, d, 90, 90);
+        p.CloseFigure();
+        return p;
+    }
+
+    private static void FillRound(Graphics g, Color c, float x, float y, float w, float h, float r)
+    {
+        using var path = RoundRect(x, y, w, h, r);
+        using var br = new SolidBrush(c);
+        g.FillPath(br, path);
+    }
+
+    private static void FillRound(Graphics g, Brush br, float x, float y, float w, float h, float r)
+    {
+        using var path = RoundRect(x, y, w, h, r);
+        g.FillPath(br, path);
+    }
+
+    private static void DrawRound(Graphics g, Color c, float x, float y, float w, float h, float r, float stroke = 1f)
+    {
+        using var path = RoundRect(x, y, w, h, r);
+        using var pen = new Pen(c, stroke);
+        g.DrawPath(pen, path);
+    }
+
+    private static void DropShadow(Graphics g, float x, float y, float w, float h, int alpha = 72)
+    {
+        using var sh = new SolidBrush(Color.FromArgb(alpha, 4, 6, 8));
+        g.FillEllipse(sh, x, y + h * 0.54f, w, h * 0.34f);
+    }
+
+    private static void BeveledRect(Graphics g, float x, float y, float w, float h, Color tone, float radius = 4f)
+    {
+        using (var path = RoundRect(x, y, w, h, radius))
+        using (var lg = new LinearGradientBrush(new PointF(x, y), new PointF(x + w, y + h),
+                   Pal.Lighten(tone, 0.17f), Pal.Darken(tone, 0.24f)))
+            g.FillPath(lg, path);
+        DrawRound(g, Pal.Darken(tone, 0.48f), x, y, w, h, radius, 1.35f);
+        using (var hi = new Pen(WithA(Pal.Lighten(tone, 0.45f), 120), 1f))
+        {
+            g.DrawLine(hi, x + radius, y + 1, x + w - radius, y + 1);
+            g.DrawLine(hi, x + 1, y + radius, x + 1, y + h - radius);
+        }
+        using (var lo = new Pen(WithA(Pal.Darken(tone, 0.55f), 130), 1f))
+        {
+            g.DrawLine(lo, x + radius, y + h - 1, x + w - radius, y + h - 1);
+            g.DrawLine(lo, x + w - 1, y + radius, x + w - 1, y + h - radius);
+        }
+    }
+
+    private static void Rivets(Graphics g, Color tone, float inset = 5f, float r = 1.55f)
+    {
+        using var dark = new SolidBrush(Pal.Darken(tone, 0.42f));
+        using var lite = new SolidBrush(Pal.Lighten(tone, 0.38f));
+        foreach (var (x, y) in new[] { (inset, inset), (S - inset, inset), (inset, S - inset), (S - inset, S - inset) })
+        {
+            g.FillEllipse(dark, x - r, y - r, r * 2f, r * 2f);
+            g.FillEllipse(lite, x - r * 0.55f, y - r * 0.65f, r, r);
+        }
+    }
+
+    private static void Scuffs(Graphics g, int seed, Color col, int n, float maxLen = 7f)
+    {
+        var r = new Random(seed);
+        using var pen = new Pen(WithA(col, 70), 1f);
+        for (int i = 0; i < n; i++)
+        {
+            float x = r.Next(5, S - 6), y = r.Next(5, S - 6);
+            g.DrawLine(pen, x, y, x + (float)(r.NextDouble() * maxLen - maxLen / 2f), y + (float)(r.NextDouble() * 3 - 1.5));
+        }
+    }
+
+    private static void DrawGear(Graphics g, float cx, float cy, float radius, Color body, Color core)
+    {
+        using var teeth = new SolidBrush(Pal.Darken(body, 0.18f));
+        for (int i = 0; i < 10; i++)
+        {
+            float a = i * MathF.PI * 2f / 10f;
+            g.FillRectangle(teeth, cx + MathF.Cos(a) * radius - 1.4f, cy + MathF.Sin(a) * radius - 1.4f, 2.8f, 2.8f);
+        }
+        using (var br = new SolidBrush(body)) g.FillEllipse(br, cx - radius * 0.82f, cy - radius * 0.82f, radius * 1.64f, radius * 1.64f);
+        using (var hole = new SolidBrush(core)) g.FillEllipse(hole, cx - radius * 0.28f, cy - radius * 0.28f, radius * 0.56f, radius * 0.56f);
+        using (var rim = new Pen(Pal.Lighten(body, 0.35f), 1f)) g.DrawArc(rim, cx - radius * 0.82f, cy - radius * 0.82f, radius * 1.64f, radius * 1.64f, 205, 70);
+    }
+
+    private static void DrawBeltSurface(Graphics g, Dir d, bool fast, int frame)
+    {
+        bool horiz = d is Dir.Right or Dir.Left;
+        Color surface = fast ? Pal.C(48, 68, 98) : Pal.C(48, 55, 64);
+        Color rail = fast ? Pal.C(28, 38, 58) : Pal.C(29, 34, 42);
+        Color slot = fast ? Pal.C(84, 112, 150) : Pal.C(70, 80, 92);
+        Color accent = fast ? Pal.C(120, 220, 255) : Pal.Accent;
+        int sign = d is Dir.Right or Dir.Down ? 1 : -1;
+
+        g.Clear(Color.Transparent);
+        if (horiz)
+        {
+            using (var sh = new SolidBrush(Color.FromArgb(55, 0, 0, 0))) g.FillRectangle(sh, 0, 25, S, 7);
+            using (var lg = new LinearGradientBrush(new RectangleF(0, 8, S, 20), Pal.Lighten(surface, 0.12f), Pal.Darken(surface, 0.18f), 90f))
+                g.FillRectangle(lg, 0, 8, S, 20);
+            using (var rb = new SolidBrush(rail)) { g.FillRectangle(rb, 0, 6, S, 4); g.FillRectangle(rb, 0, 27, S, 4); }
+            using (var hi = new Pen(WithA(Pal.Lighten(surface, 0.45f), 75), 1f)) g.DrawLine(hi, 0, 9, S, 9);
+            using (var p = new Pen(slot, fast ? 1.8f : 1.5f))
+                for (int i = -2; i < 8; i++)
+                {
+                    float x = (fast ? 3 : 5) + i * (fast ? 6 : 8) + frame * (fast ? 1.4f : 2f);
+                    while (x > S + 4) x -= fast ? 30 : 32;
+                    if (x < -2 || x > S + 2) continue;
+                    g.DrawLine(p, x, 11, x + sign * (fast ? 2.5f : 1.5f), 25);
+                }
+            for (int k = 0; k < (fast ? 2 : 1); k++)
+            {
+                float cx = S / 2f + sign * (k == 0 ? 4f : -5f);
+                using var br = new SolidBrush(WithA(accent, fast ? 190 : 150));
+                g.FillPolygon(br, new[] { new PointF(cx + sign * 5.5f, 18), new PointF(cx - sign * 3.5f, 13), new PointF(cx - sign * 3.5f, 23) });
+            }
+        }
+        else
+        {
+            using (var sh = new SolidBrush(Color.FromArgb(55, 0, 0, 0))) g.FillRectangle(sh, 10, S - 7, 18, 6);
+            using (var lg = new LinearGradientBrush(new RectangleF(8, 0, 20, S), Pal.Lighten(surface, 0.12f), Pal.Darken(surface, 0.18f), 0f))
+                g.FillRectangle(lg, 8, 0, 20, S);
+            using (var rb = new SolidBrush(rail)) { g.FillRectangle(rb, 6, 0, 4, S); g.FillRectangle(rb, 27, 0, 4, S); }
+            using (var hi = new Pen(WithA(Pal.Lighten(surface, 0.45f), 75), 1f)) g.DrawLine(hi, 9, 0, 9, S);
+            using (var p = new Pen(slot, fast ? 1.8f : 1.5f))
+                for (int i = -2; i < 8; i++)
+                {
+                    float y = (fast ? 3 : 5) + i * (fast ? 6 : 8) + frame * (fast ? 1.4f : 2f);
+                    while (y > S + 4) y -= fast ? 30 : 32;
+                    if (y < -2 || y > S + 2) continue;
+                    g.DrawLine(p, 11, y, 25, y + sign * (fast ? 2.5f : 1.5f));
+                }
+            for (int k = 0; k < (fast ? 2 : 1); k++)
+            {
+                float cy = S / 2f + sign * (k == 0 ? 4f : -5f);
+                using var br = new SolidBrush(WithA(accent, fast ? 190 : 150));
+                g.FillPolygon(br, new[] { new PointF(18, cy + sign * 5.5f), new PointF(13, cy - sign * 3.5f), new PointF(23, cy - sign * 3.5f) });
+            }
+        }
+    }
+
+    private static void DrawLogisticsBase(Graphics g, bool fast = false)
+    {
+        Color surface = fast ? Pal.C(48, 68, 98) : Pal.C(48, 55, 64);
+        Color rail = fast ? Pal.C(28, 38, 58) : Pal.C(29, 34, 42);
+        g.Clear(Color.Transparent);
+        using (var sh = new SolidBrush(Color.FromArgb(55, 0, 0, 0))) g.FillEllipse(sh, 4, 23, S - 8, 9);
+        using (var lg = new LinearGradientBrush(new RectangleF(4, 4, S - 8, S - 8), Pal.Lighten(surface, 0.14f), Pal.Darken(surface, 0.2f), 45f))
+            g.FillRectangle(lg, 5, 5, S - 10, S - 10);
+        using (var rb = new SolidBrush(rail))
+        {
+            g.FillRectangle(rb, 0, 7, S, 3);
+            g.FillRectangle(rb, 0, S - 10, S, 3);
+            g.FillRectangle(rb, 7, 0, 3, S);
+            g.FillRectangle(rb, S - 10, 0, 3, S);
+        }
+        DrawRound(g, Pal.Darken(surface, 0.42f), 5, 5, S - 10, S - 10, 4, 1.1f);
+        using var seam = new Pen(WithA(Pal.Lighten(surface, 0.32f), 75), 1f);
+        g.DrawLine(seam, 7, 7, S - 8, 7);
+        g.DrawLine(seam, 7, 7, 7, S - 8);
+    }
+
     // ------------------------------------------------------------ terrain --
 
     private static Bitmap BakeGround(int variant)
     {
-        var bases = new[] { Pal.C(44, 48, 52), Pal.C(42, 47, 54), Pal.C(46, 48, 50) };
-        var r = new Random(100 + variant);
+        var bases = new[] { Pal.C(39, 45, 48), Pal.C(37, 43, 51), Pal.C(43, 45, 46) };
+        var baseCol = bases[variant];
+        var r = new Random(100 + variant * 17);
         var b = Make((g, bmp) =>
         {
-            g.Clear(bases[variant]);
-            // large soft patches — organic variation instead of uniform flat fill
-            for (int i = 0; i < 6; i++)
+            using (var lg = new LinearGradientBrush(new PointF(0, 0), new PointF(S, S),
+                       Pal.Lighten(baseCol, 0.045f), Pal.Darken(baseCol, 0.075f)))
+                g.FillRectangle(lg, 0, 0, S, S);
+
+            // broad mineral stains that line up softly under buildings.
+            for (int i = 0; i < 7; i++)
             {
-                int w = r.Next(10, 24), h = r.Next(8, 18);
-                int x = r.Next(-4, S - 6), y = r.Next(-4, S - 6);
-                var tone = i % 2 == 0
-                    ? Pal.C(Math.Min(255, bases[variant].R + 6), Math.Min(255, bases[variant].G + 6), Math.Min(255, bases[variant].B + 5))
-                    : Pal.C(Math.Max(0, bases[variant].R - 6), Math.Max(0, bases[variant].G - 6), Math.Max(0, bases[variant].B - 5));
-                using var br = new SolidBrush(Pal.CA(45, tone));
+                float w = r.Next(11, 25), h = r.Next(7, 18);
+                float x = r.Next(-5, S - 5), y = r.Next(-4, S - 4);
+                var tone = i % 2 == 0 ? Pal.Lighten(baseCol, 0.10f) : Pal.Darken(baseCol, 0.10f);
+                using var br = new SolidBrush(WithA(tone, 32 + r.Next(28)));
                 g.FillEllipse(br, x, y, w, h);
             }
-            Specks(g, r, Pal.CA(255, Pal.C(52, 57, 62)), 20, 1);
-            Specks(g, r, Pal.CA(255, Pal.C(36, 40, 44)), 16, 2);
-            Specks(g, r, Pal.CA(255, Pal.C(58, 62, 66)), 8, 1);
-            Specks(g, r, Pal.CA(120, Pal.C(84, 90, 96)), 4, 1);   // sparse bright grit
+
+            // hairline cracks / embedded grit; sparse enough to avoid visual snow.
+            using (var crack = new Pen(WithA(Pal.Darken(baseCol, 0.28f), 70), 1f))
+                for (int i = 0; i < 3; i++)
+                {
+                    float x = r.Next(3, S - 6), y = r.Next(3, S - 6);
+                    g.DrawLine(crack, x, y, x + r.Next(-5, 6), y + r.Next(2, 7));
+                }
+            Specks(g, r, WithA(Pal.Lighten(baseCol, 0.18f), 125), 8, 1);
+            Specks(g, r, WithA(Pal.Darken(baseCol, 0.18f), 120), 7, 1);
         });
-        Noise(b, 55 + variant, 5);
+        Noise(b, 55 + variant, 3);
         return b;
     }
 
     private static Bitmap BakeDecor(int variant)
     {
-        var r = new Random(900 + variant);
+        var r = new Random(900 + variant * 31);
         return Make((g, bmp) =>
         {
-            if (variant == 0) // pebbles
-                Specks(g, r, Pal.C(70, 76, 84), 5, 2);
-            else if (variant == 1) // dry tuft
+            g.Clear(Color.Transparent);
+            if (variant == 0) // small mineral stones
             {
-                using var p = new Pen(Pal.C(86, 96, 64), 1f);
-                for (int i = 0; i < 5; i++)
-                {
-                    int x = r.Next(4, S - 4), y = r.Next(4, S - 6);
-                    g.DrawLine(p, x, y + 3, x + r.Next(-2, 3), y);
-                }
-            }
-            else // faint crack
-            {
-                using var p = new Pen(Pal.C(34, 38, 42), 1f);
-                int x = r.Next(6, S - 6), y = r.Next(2, 6);
                 for (int i = 0; i < 4; i++)
                 {
-                    int nx = x + r.Next(-3, 4), ny = y + r.Next(4, 8);
+                    float x = r.Next(4, S - 6), y = r.Next(5, S - 5);
+                    var c = i % 2 == 0 ? Pal.C(78, 84, 90) : Pal.C(58, 64, 70);
+                    using var sh = new SolidBrush(Color.FromArgb(50, 0, 0, 0));
+                    g.FillEllipse(sh, x + 1, y + 1, 4, 2);
+                    using var br = new SolidBrush(c);
+                    g.FillEllipse(br, x, y, 3 + r.Next(2), 2 + r.Next(2));
+                    using var hi = new SolidBrush(WithA(Pal.Lighten(c, 0.35f), 120));
+                    g.FillEllipse(hi, x + 0.5f, y + 0.3f, 1.4f, 1.1f);
+                }
+            }
+            else if (variant == 1) // dry grass tuft
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    int x = r.Next(5, S - 5), y = r.Next(8, S - 6);
+                    using var p = new Pen(i == 0 ? Pal.C(104, 116, 70) : Pal.C(72, 86, 56), 1.2f);
+                    g.DrawLine(p, x, y + 5, x - 3, y);
+                    g.DrawLine(p, x, y + 5, x, y - 2);
+                    g.DrawLine(p, x, y + 5, x + 3, y + 1);
+                }
+            }
+            else // fine fractured ground
+            {
+                using var p = new Pen(WithA(Pal.C(22, 26, 30), 135), 1f);
+                float x = r.Next(6, S - 7), y = r.Next(4, 10);
+                for (int i = 0; i < 4; i++)
+                {
+                    float nx = x + r.Next(-4, 5), ny = y + r.Next(4, 8);
                     g.DrawLine(p, x, y, nx, ny);
                     x = nx; y = ny;
                 }
+                using var rim = new Pen(WithA(Pal.C(82, 88, 92), 45), 1f);
+                g.DrawLine(rim, x - 2, y - 1, x + 2, y + 1);
             }
         });
     }
@@ -677,28 +886,23 @@ public static class Sprites
         var r = new Random(301);
         var b = Make((g, bmp) =>
         {
-            g.Clear(Color.Transparent);   // ground shows between rocks
-            // cast shadow (light from NW)
-            using (var sh = new SolidBrush(Pal.CA(90, Pal.C(8, 10, 12))))
-                g.FillEllipse(sh, 6, 12, 24, 16);
-            // 3-tone boulders: top light, body, bottom shade + outline
-            for (int i = 0; i < 6; i++)
+            g.Clear(Color.Transparent);
+            DropShadow(g, 4, 5, S - 8, S - 8, 86);
+            for (int i = 0; i < 5; i++)
             {
-                int w = r.Next(10, 20), h = r.Next(8, 16);
-                int x = r.Next(2, S - w - 2), y = r.Next(1, S - h - 3);
-                int t = r.Next(3);
-                var body = Pal.C(62 + t * 8, 66 + t * 8, 74 + t * 7);
-                using (var br = new SolidBrush(body))
-                    g.FillEllipse(br, x, y, w, h);
-                using (var hi = new SolidBrush(Pal.Lighten(body, 0.28f)))
-                    g.FillEllipse(hi, x + 1, y + 1, w * 0.55f, h * 0.45f);
-                using (var lo = new SolidBrush(Pal.Darken(body, 0.35f)))
-                    g.FillEllipse(lo, x + 2, y + (int)(h * 0.6f), w * 0.7f, h * 0.35f);
-                using (var pen = new Pen(Pal.C(30, 32, 38), 1f))
-                    g.DrawEllipse(pen, x, y, w, h);
+                float w = r.Next(10, 18), h = r.Next(8, 15);
+                float x = r.Next(3, S - (int)w - 2), y = r.Next(2, S - (int)h - 6);
+                var body = Mix(Pal.C(78, 84, 92), Pal.C(116, 120, 126), r.Next(0, 100) / 100f);
+                using (var path = RoundRect(x, y, w, h, 3.5f))
+                using (var lg = new LinearGradientBrush(new PointF(x, y), new PointF(x + w, y + h),
+                           Pal.Lighten(body, 0.25f), Pal.Darken(body, 0.30f)))
+                    g.FillPath(lg, path);
+                DrawRound(g, Pal.Darken(body, 0.48f), x, y, w, h, 3.5f, 1f);
+                using (var hi = new Pen(WithA(Pal.Lighten(body, 0.55f), 130), 1f))
+                    g.DrawLine(hi, x + 2, y + 2, x + w * 0.58f, y + 1);
             }
         });
-        Noise(b, 302, 6);
+        Noise(b, 302, 4);
         return b;
     }
 
@@ -707,28 +911,22 @@ public static class Sprites
         var b = Make((g, bmp) =>
         {
             g.Clear(Color.Transparent);
-            // ore bed: darker dirt patch the nuggets sit in
-            using (var bed = new SolidBrush(Pal.CA(150, Pal.C(30, 24, 18))))
-                g.FillEllipse(bed, 2, 3, S - 4, S - 7);
-            using (var sh = new SolidBrush(Pal.CA(80, Pal.C(8, 10, 12))))
-                g.FillEllipse(sh, 5, 8, 22, 18);
+            using (var bed = new SolidBrush(WithA(Pal.C(44, 32, 24), 165)))
+                g.FillEllipse(bed, 2, 4, S - 4, S - 8);
+            DropShadow(g, 4, 7, S - 8, S - 10, 65);
             var r = new Random(401);
-            for (int i = 0; i < 6; i++)
+            for (int i = 0; i < 7; i++)
             {
-                int size = r.Next(7, 13);
-                int x = 3 + (i % 3) * 10 + r.Next(-2, 3);
-                int y = 3 + (i / 3) * 13 + r.Next(-2, 3);
-                using (var br = new SolidBrush(Pal.C(118, 70, 38)))
-                    g.FillEllipse(br, x, y, size, size);
-                using (var hi = new SolidBrush(Pal.C(196, 128, 66)))
-                    g.FillEllipse(hi, x + 1, y + 1, size / 2, size / 2);
-                using (var sp = new SolidBrush(Pal.C(240, 178, 108)))
-                    g.FillRectangle(sp, x + size / 3, y + size / 3, 2, 2);
-                using (var pen = new Pen(Pal.C(60, 34, 18), 1f))
-                    g.DrawEllipse(pen, x, y, size, size);
+                float size = r.Next(6, 12);
+                float x = 4 + (i % 3) * 10 + r.Next(-2, 3);
+                float y = 4 + (i / 3) * 9 + r.Next(-1, 3);
+                var ore = Mix(Pal.C(126, 76, 44), Pal.C(182, 108, 56), r.Next(100) / 100f);
+                using (var br = new SolidBrush(ore)) g.FillEllipse(br, x, y, size, size * 0.82f);
+                using (var hi = new SolidBrush(Pal.C(238, 166, 92))) g.FillEllipse(hi, x + 1.2f, y + 1, size * 0.38f, size * 0.28f);
+                using (var edge = new Pen(Pal.C(62, 36, 22), 1f)) g.DrawEllipse(edge, x, y, size, size * 0.82f);
             }
         });
-        Noise(b, 402, 8);
+        Noise(b, 402, 4);
         return b;
     }
 
@@ -737,35 +935,30 @@ public static class Sprites
         var b = Make((g, bmp) =>
         {
             g.Clear(Color.Transparent);
-            // layered glow bed
-            using (var glow = new SolidBrush(Pal.CA(36, Pal.Crystal)))
-                g.FillEllipse(glow, 1, 3, S - 2, S - 6);
-            using (var glow2 = new SolidBrush(Pal.CA(70, Pal.Crystal)))
-                g.FillEllipse(glow2, 6, 8, S - 12, S - 14);
-            // ground shadow
-            using (var sh = new SolidBrush(Pal.CA(90, Pal.C(10, 6, 18))))
-                g.FillEllipse(sh, 7, 23, 18, 6);
+            using (var glow = new SolidBrush(WithA(Pal.Crystal, 34)))
+                g.FillEllipse(glow, 1, 5, S - 2, S - 9);
+            using (var glow2 = new SolidBrush(WithA(Pal.C(170, 96, 255), 58)))
+                g.FillEllipse(glow2, 7, 11, S - 14, S - 18);
+            DropShadow(g, 8, 16, 20, 12, 85);
             var r = new Random(501);
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < 5; i++)
             {
-                float cx = 17 + (i % 2) * 8 - 6 + r.Next(-2, 3);
-                float cy = 17 + (i / 2) * 7 - 5 + r.Next(-2, 3);
-                float w = 6 + r.Next(3), h = 13 + r.Next(6);
+                float cx = 12 + (i % 3) * 6 + r.Next(-1, 2);
+                float cy = 18 + (i / 3) * 4 + r.Next(-3, 2);
+                float w = 5 + r.Next(4), h = 13 + r.Next(8);
                 var pts = new[]
                 {
                     new PointF(cx, cy - h / 2),
-                    new PointF(cx + w / 2, cy - h / 6),
-                    new PointF(cx + w / 3, cy + h / 2),
-                    new PointF(cx - w / 3, cy + h / 2),
-                    new PointF(cx - w / 2, cy - h / 6),
+                    new PointF(cx + w / 2, cy - h / 7),
+                    new PointF(cx + w * 0.32f, cy + h / 2),
+                    new PointF(cx - w * 0.32f, cy + h / 2),
+                    new PointF(cx - w / 2, cy - h / 7),
                 };
-                using (var br = new SolidBrush(Pal.C(118, 60, 205)))
-                    g.FillPolygon(br, pts);
-                using (var edge = new Pen(Pal.C(214, 176, 255), 1.2f))
-                    g.DrawPolygon(edge, pts);
-                // bright core
-                using (var core = new SolidBrush(Pal.CA(180, Pal.C(240, 220, 255))))
-                    g.FillEllipse(core, cx - 1, cy - h / 4, 2, 3);
+                using (var body = new LinearGradientBrush(new PointF(cx - w, cy - h / 2), new PointF(cx + w, cy + h / 2), Pal.C(226, 190, 255), Pal.C(94, 46, 176)))
+                    g.FillPolygon(body, pts);
+                using (var facet = new SolidBrush(WithA(Pal.C(248, 235, 255), 155)))
+                    g.FillPolygon(facet, new[] { pts[0], pts[1], new PointF(cx, cy + 1) });
+                using (var edge = new Pen(Pal.C(64, 36, 126), 1f)) g.DrawPolygon(edge, pts);
             }
         });
         return b;
@@ -879,28 +1072,21 @@ public static class Sprites
         var b = Make((g, bmp) =>
         {
             g.Clear(Color.Transparent);
-            // ground contact shadow
-            using (var sh = new SolidBrush(Pal.CA(70, Pal.C(6, 12, 10))))
-                g.FillEllipse(sh, 5, S - 8, S - 10, 5);
-            // soft spore field
-            using (var bed = new SolidBrush(Pal.CA(28, Pal.Flora)))
-                g.FillEllipse(bed, 2, 4, S - 4, S - 8);
+            DropShadow(g, 5, S - 14, S - 10, 11, 74);
+            using (var bed = new SolidBrush(WithA(Pal.Flora, 28)))
+                g.FillEllipse(bed, 2, 6, S - 4, S - 10);
             var r = new Random(601);
-            for (int i = 0; i < 5; i++)
+            for (int i = 0; i < 6; i++)
             {
-                float x = 6 + r.Next(S - 12), y = 9 + r.Next(10);
-                float h = 6 + r.Next(7);
-                // stem
-                using (var stem = new Pen(Pal.C(28, 118, 96), 1.8f))
-                    g.DrawLine(stem, x, y + h, x + (r.Next(3) - 1), y);
-                // glow halo behind the cap
-                using (var halo = new SolidBrush(Pal.CA(46, Pal.Flora)))
-                    g.FillEllipse(halo, x - 5.5f, y - 5.5f, 11, 11);
-                // cap
-                using (var cap = new SolidBrush(Pal.C(64, 226, 184)))
-                    g.FillEllipse(cap, x - 3.2f, y - 3.2f, 6.4f, 5f);
-                using (var hi = new SolidBrush(Pal.C(150, 255, 226)))
-                    g.FillEllipse(hi, x - 1.6f, y - 2.6f, 2.6f, 1.8f);
+                float x = 6 + r.Next(S - 12), y = 12 + r.Next(11);
+                float h = 7 + r.Next(8);
+                using (var stem = new Pen(Pal.C(24, 126, 100), 1.6f))
+                    g.DrawBezier(stem, x, y + h, x - 2 + r.Next(5), y + h * 0.65f, x - 2 + r.Next(5), y + h * 0.35f, x + r.Next(-2, 3), y);
+                using (var halo = new SolidBrush(WithA(Pal.Flora, 42)))
+                    g.FillEllipse(halo, x - 5.5f, y - 5.2f, 11, 10);
+                using (var cap = new LinearGradientBrush(new PointF(x - 4, y - 4), new PointF(x + 4, y + 4), Pal.C(150, 255, 226), Pal.C(36, 190, 150)))
+                    g.FillEllipse(cap, x - 3.6f, y - 3.0f, 7.2f, 5.4f);
+                using (var dot = new SolidBrush(Pal.C(220, 255, 238))) g.FillEllipse(dot, x - 1.2f, y - 2.2f, 2, 1.4f);
             }
         });
         return b;
@@ -908,40 +1094,8 @@ public static class Sprites
 
     private static Bitmap BakeBelt(Dir d, int frame = 0)
     {
-        bool horiz = d is Dir.Right or Dir.Left;
-        var b = Make((g, bmp) =>
-        {
-            g.Clear(Pal.BeltCol);
-            // side rails
-            using (var rail = new SolidBrush(Pal.C(32, 36, 42)))
-            {
-                if (horiz) { g.FillRectangle(rail, 0, 2, S, 3); g.FillRectangle(rail, 0, S - 5, S, 3); }
-                else { g.FillRectangle(rail, 2, 0, 3, S); g.FillRectangle(rail, S - 5, 0, 3, S); }
-            }
-            // rollers
-            // scrolling rollers: 8px period, 2px/frame, 4-frame loop
-            using (var roller = new Pen(Pal.C(70, 78, 88), 2f))
-                for (int i = -1; i < 5; i++)
-                {
-                    int p = 6 + i * 8 + frame * 2;
-                    if (p < 6 || p > S - 6) continue;
-                    if (horiz) g.DrawLine(roller, p, 6, p, S - 6);
-                    else g.DrawLine(roller, 6, p, S - 6, p);
-                }
-            // center arrow
-            float cx = S / 2f, cy = S / 2f;
-            int sgn = d is Dir.Right or Dir.Down ? 1 : -1;
-            var dx = horiz ? sgn : 0; var dy = horiz ? 0 : sgn;
-            var pts = new[]
-            {
-                new PointF(cx + dx * 6, cy + dy * 6),
-                new PointF(cx - dx * 5 - (horiz ? 0 : 5), cy - dy * 5 - (horiz ? 5 : 0)),
-                new PointF(cx - dx * 5 + (horiz ? 0 : 5), cy - dy * 5 + (horiz ? 5 : 0)),
-            };
-            using var br = new SolidBrush(Pal.CA(170, Pal.Accent));
-            g.FillPolygon(br, pts);
-        });
-        Noise(b, 700 + (int)d, 4);
+        var b = Make((g, bmp) => DrawBeltSurface(g, d, false, frame));
+        Noise(b, 700 + (int)d * 11 + frame, 2);
         return b;
     }
 
@@ -949,63 +1103,72 @@ public static class Sprites
 
     private static void PanelBase(Graphics g, Color tone)
     {
-        using var br = new SolidBrush(Pal.Darken(tone, 0.25f));
-        g.FillRectangle(br, 1, 1, S - 2, S - 2);
-        using var br2 = new SolidBrush(tone);
-        g.FillRectangle(br2, 3, 3, S - 6, S - 6);
-        using var pen = new Pen(Pal.Darken(tone, 0.45f), 1f);
-        g.DrawRectangle(pen, 1.5f, 1.5f, S - 3, S - 3);
-        // corner rivets
-        using var riv = new SolidBrush(Pal.Lighten(tone, 0.25f));
-        foreach (var (x, y) in new[] { (3, 3), (S - 5, 3), (3, S - 5), (S - 5, S - 5) })
-            g.FillEllipse(riv, x, y, 2, 2);
+        g.Clear(Color.Transparent);
+        DropShadow(g, 3, 3, S - 6, S - 3, 68);
+        BeveledRect(g, 2.2f, 2.2f, S - 5.4f, S - 6.2f, tone, 4.2f);
+
+        // inset service plate: makes one-tile buildings read as engineered
+        // objects instead of flat colored squares.
+        using (var inset = RoundRect(6, 6, S - 12, S - 14, 2.8f))
+        using (var lg = new LinearGradientBrush(new PointF(6, 6), new PointF(S - 6, S - 8),
+                   WithA(Pal.Lighten(tone, 0.19f), 115), WithA(Pal.Darken(tone, 0.25f), 115)))
+            g.FillPath(lg, inset);
+        DrawRound(g, WithA(Pal.Darken(tone, 0.38f), 170), 6, 6, S - 12, S - 14, 2.8f, 1f);
+
+        using (var seam = new Pen(WithA(Pal.Darken(tone, 0.45f), 92), 1f))
+        {
+            g.DrawLine(seam, 8, S - 12, S - 8, S - 12);
+            g.DrawLine(seam, S - 12, 8, S - 12, S - 11);
+        }
+        Scuffs(g, tone.ToArgb(), Pal.Darken(tone, 0.65f), 4, 5f);
+        Rivets(g, tone, 5.5f, 1.45f);
     }
 
     private static Bitmap BakeDrill(bool deep)
     {
-        // 2x2 multiblock: baked at 2S x 2S so it never gets stretched
-        var tone = deep ? Pal.C(105, 82, 55) : Pal.C(120, 96, 64);
         int W = S * 2;
+        var tone = deep ? Pal.C(96, 78, 58) : Pal.C(120, 94, 60);
         var b = new Bitmap(W, W);
         using (var g = Graphics.FromImage(b))
         {
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            // base plate + rim
-            using (var baseB = new SolidBrush(tone)) g.FillRectangle(baseB, 1, 1, W - 2, W - 2);
-            using (var edge = new Pen(Pal.Darken(tone, 0.45f), 2f)) g.DrawRectangle(edge, 1, 1, W - 4, W - 4);
-            // tread scuffs
-            using (var tread = new Pen(Pal.Darken(tone, 0.18f), 1f))
-                for (int i = 0; i < 6; i++)
-                {
-                    g.DrawLine(tread, 5 + i * 3, 5, 8 + i * 3, 8);
-                    g.DrawLine(tread, W - 9 - i * 3, W - 9, W - 6 - i * 3, W - 6);
-                }
-            // corner bolts
-            using (var bolt = new SolidBrush(Pal.C(70, 62, 50)))
-                foreach (var (bx, by) in new[] { (5, 5), (W - 8, 5), (5, W - 8), (W - 8, W - 8) })
-                    g.FillRectangle(bolt, bx, by, 3, 3);
-            // no baked item port: Mindustry-style IO is decided by the
-            // adjacent belts/buildings, not a machine-side marker
-            // gantry to the center
-            using (var p = new Pen(Pal.C(45, 40, 34), 3f))
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var sh = new SolidBrush(Color.FromArgb(75, 0, 0, 0))) g.FillEllipse(sh, 6, W - 18, W - 12, 14);
+            using (var hull = new LinearGradientBrush(new PointF(2, 2), new PointF(W - 2, W - 2), Pal.Lighten(tone, 0.16f), Pal.Darken(tone, 0.26f)))
+                g.FillRectangle(hull, 2, 2, W - 4, W - 7);
+            using (var edge = new Pen(Pal.Darken(tone, 0.48f), 2.2f)) g.DrawRectangle(edge, 2, 2, W - 5, W - 8);
+            using (var grid = new Pen(WithA(Pal.Darken(tone, 0.38f), 130), 1.1f))
             {
-                g.DrawLine(p, 8, 8, W / 2, W / 2);
-                g.DrawLine(p, W - 8, 8, W / 2, W / 2);
-                g.DrawLine(p, 8, W - 8, W / 2, W / 2);
-                g.DrawLine(p, W - 8, W - 8, W / 2, W / 2);
+                g.DrawLine(grid, W / 2f, 5, W / 2f, W - 8);
+                g.DrawLine(grid, 5, W / 2f, W - 5, W / 2f);
             }
-            // hub ring + drill bit
+            using (var tread = new Pen(WithA(Pal.Darken(tone, 0.45f), 110), 1.2f))
+                for (int i = 0; i < 8; i++)
+                {
+                    g.DrawLine(tread, 8 + i * 4, 8, 13 + i * 4, 12);
+                    g.DrawLine(tread, W - 13 - i * 4, W - 14, W - 8 - i * 4, W - 10);
+                }
+            using (var bolt = new SolidBrush(Pal.C(62, 54, 46)))
+                foreach (var (bx, by) in new[] { (7, 7), (W - 11, 7), (7, W - 13), (W - 11, W - 13) })
+                    g.FillEllipse(bolt, bx, by, 4, 4);
+            using (var gantry = new Pen(Pal.C(48, 42, 36), 3.2f))
+            {
+                gantry.StartCap = LineCap.Round; gantry.EndCap = LineCap.Round;
+                g.DrawLine(gantry, 10, 10, W / 2f, W / 2f);
+                g.DrawLine(gantry, W - 10, 10, W / 2f, W / 2f);
+                g.DrawLine(gantry, 10, W - 12, W / 2f, W / 2f);
+                g.DrawLine(gantry, W - 10, W - 12, W / 2f, W / 2f);
+            }
+            DrawGear(g, W / 2f, W / 2f, deep ? 17 : 15, Pal.C(86, 78, 70), Pal.C(34, 30, 26));
             float c = W / 2f;
-            using (var ring = new Pen(Pal.C(60, 54, 46), 2f)) g.DrawEllipse(ring, c - 11, c - 11, 22, 22);
-            var pts = new[] { new PointF(c, c - 14), new PointF(c + 8, c), new PointF(c, c + 14), new PointF(c - 8, c) };
-            using (var br = new SolidBrush(Pal.C(168, 120, 60))) g.FillPolygon(br, pts);
-            using (var hl = new Pen(Pal.C(230, 190, 120), 1.4f)) g.DrawLine(hl, c, c - 14, c, c + 12);
-            if (deep) // hazard stripes across the south rim
-                using (var hz = new Pen(Pal.C(214, 174, 60), 3f))
-                    for (int i = 0; i < 6; i++)
-                        g.DrawLine(hz, 6 + i * 10, W - 8, 12 + i * 10, W - 4);
+            var bit = new[] { new PointF(c, c - 15), new PointF(c + 8, c), new PointF(c, c + 15), new PointF(c - 8, c) };
+            using (var br = new LinearGradientBrush(new PointF(c - 8, c - 15), new PointF(c + 8, c + 15), Pal.C(238, 186, 92), Pal.C(130, 80, 42)))
+                g.FillPolygon(br, bit);
+            using (var hl = new Pen(Pal.C(255, 220, 136), 1.5f)) g.DrawLine(hl, c, c - 14, c, c + 13);
+            if (deep)
+                using (var hz = new Pen(Pal.C(230, 178, 58), 3.1f))
+                    for (int i = 0; i < 7; i++) g.DrawLine(hz, 7 + i * 9, W - 10, 13 + i * 9, W - 5);
         }
-        Noise(b, deep ? 802 : 801, 6);
+        Noise(b, deep ? 802 : 801, 3);
         return b;
     }
 
@@ -1013,24 +1176,29 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(150, 84, 60));
-            using (var frame = new SolidBrush(Pal.C(70, 42, 32)))
-                g.FillRectangle(frame, 7, 8, 22, 20);
-            using (var mouth = new SolidBrush(Pal.C(20, 12, 8)))
-                g.FillRectangle(mouth, 10, 12, 16, 12);
-            // heat glow
-            using (var glow = new SolidBrush(Pal.C(255, 150, 50)))
-                g.FillEllipse(glow, 13, 15, 10, 6);
-            using (var ember = new SolidBrush(Pal.C(255, 220, 130)))
+            var tone = Pal.C(136, 78, 58);
+            PanelBase(g, tone);
+            using (var flue = new LinearGradientBrush(new PointF(24, 3), new PointF(30, 13), Pal.C(104, 70, 54), Pal.C(42, 30, 26)))
+                g.FillRectangle(flue, 24, 3, 6, 11);
+            DrawRound(g, Pal.C(34, 24, 20), 24, 3, 6, 11, 1.5f, 1f);
+            using (var frame = new SolidBrush(Pal.C(70, 44, 36)))
+                FillRound(g, Pal.C(70, 44, 36), 7, 9, 22, 18, 3f);
+            using (var mouth = new SolidBrush(Pal.C(18, 12, 10)))
+                FillRound(g, Pal.C(18, 12, 10), 10, 13, 16, 10, 2f);
+            using (var glow = new LinearGradientBrush(new PointF(12, 15), new PointF(24, 23), Pal.C(255, 230, 110), Pal.C(224, 76, 34)))
+                g.FillEllipse(glow, 12, 15, 12, 7);
+            using (var ember = new SolidBrush(Pal.C(255, 236, 170)))
             {
-                g.FillEllipse(ember, 15, 16, 3, 3);
-                g.FillEllipse(ember, 19, 17, 2, 2);
+                g.FillEllipse(ember, 15, 17, 3, 2.5f);
+                g.FillEllipse(ember, 20, 18, 2.5f, 2f);
             }
-            // chimney
-            using (var ch = new SolidBrush(Pal.C(60, 40, 30)))
-                g.FillRectangle(ch, 24, 2, 5, 9);
+            using (var soot = new Pen(WithA(Pal.C(20, 16, 14), 100), 1.2f))
+            {
+                g.DrawLine(soot, 9, 11, 27, 11);
+                g.DrawLine(soot, 10, 24, 26, 24);
+            }
         });
-        Noise(b, 803, 6);
+        Noise(b, 803, 3);
         return b;
     }
 
@@ -1038,22 +1206,23 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(96, 96, 128));
-            using (var bed = new SolidBrush(Pal.C(52, 52, 74)))
-                g.FillRectangle(bed, 7, 20, 22, 9);
-            // print head gantry
-            using (var p = new Pen(Pal.C(42, 42, 60), 2f))
+            var tone = Pal.C(88, 92, 130);
+            PanelBase(g, tone);
+            FillRound(g, Pal.C(42, 48, 72), 7, 21, 22, 8, 2f);
+            using (var bedHi = new Pen(WithA(Pal.C(150, 160, 205), 100), 1f)) g.DrawLine(bedHi, 9, 22, 27, 22);
+            using (var rail = new Pen(Pal.C(34, 38, 58), 2.4f))
             {
-                g.DrawLine(p, 8, 8, 8, 22);
-                g.DrawLine(p, 28, 8, 28, 22);
-                g.DrawLine(p, 8, 9, 28, 9);
+                rail.StartCap = LineCap.Round; rail.EndCap = LineCap.Round;
+                g.DrawLine(rail, 8, 9, 28, 9);
+                g.DrawLine(rail, 8, 9, 8, 22);
+                g.DrawLine(rail, 28, 9, 28, 22);
             }
-            using var head = new SolidBrush(Pal.C(90, 200, 255));
-            g.FillRectangle(head, 16, 10, 5, 5);
-            using var beam = new SolidBrush(Pal.CA(120, Pal.C(90, 200, 255)));
-            g.FillRectangle(beam, 17, 15, 3, 7);
+            BeveledRect(g, 14, 10, 8, 7, Pal.C(72, 168, 220), 2f);
+            using (var beam = new LinearGradientBrush(new PointF(18, 16), new PointF(18, 22), WithA(Pal.C(110, 230, 255), 185), WithA(Pal.C(110, 230, 255), 0)))
+                g.FillRectangle(beam, 17, 16, 2.5f, 7);
+            using (var spark = new SolidBrush(Pal.C(240, 250, 255))) g.FillEllipse(spark, 17, 22, 2.5f, 2.5f);
         });
-        Noise(b, 804, 5);
+        Noise(b, 804, 3);
         return b;
     }
 
@@ -1061,19 +1230,18 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(56, 120, 96));
-            using (var tank = new SolidBrush(Pal.CA(220, Pal.C(36, 84, 66))))
-                g.FillRectangle(tank, 8, 6, 20, 24);
-            using (var glass = new SolidBrush(Pal.CA(200, Pal.C(66, 160, 128))))
-                g.FillRectangle(glass, 10, 8, 16, 20);
-            using var bub = new SolidBrush(Pal.CA(230, Pal.C(140, 255, 200)));
+            var tone = Pal.C(48, 112, 92);
+            PanelBase(g, tone);
+            FillRound(g, Pal.C(24, 58, 50), 7, 5, 22, 26, 3f);
+            using (var glass = new LinearGradientBrush(new PointF(10, 7), new PointF(26, 29), WithA(Pal.C(96, 226, 180), 210), WithA(Pal.C(22, 90, 76), 230)))
+                FillRound(g, glass, 10, 8, 16, 20, 3f);
+            using (var shine = new Pen(WithA(Pal.C(220, 255, 238), 120), 1f)) g.DrawLine(shine, 12, 10, 12, 25);
             var r = new Random(805);
-            for (int i = 0; i < 6; i++)
-                g.FillEllipse(bub, 11 + r.Next(13), 9 + r.Next(18), 2, 2);
-            using (var cap = new SolidBrush(Pal.C(30, 60, 48)))
-                g.FillRectangle(cap, 7, 4, 22, 4);
+            using var bub = new SolidBrush(WithA(Pal.C(200, 255, 220), 220));
+            for (int i = 0; i < 7; i++) g.FillEllipse(bub, 12 + r.Next(12), 10 + r.Next(16), 1.8f + r.Next(2), 1.8f + r.Next(2));
+            BeveledRect(g, 8, 4, 20, 4, Pal.C(34, 72, 58), 1.5f);
         });
-        Noise(b, 805, 4);
+        Noise(b, 805, 2);
         return b;
     }
 
@@ -1081,16 +1249,25 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            using var wood = new SolidBrush(Pal.C(122, 98, 66));
-            g.FillRectangle(wood, 4, 6, S - 8, S - 10);
-            using var dark = new Pen(Pal.C(74, 58, 38), 1.4f);
-            for (int i = 1; i < 3; i++)
-                g.DrawLine(dark, 4, 6 + i * 8, S - 4, 6 + i * 8);
-            g.DrawRectangle(dark, 4, 6, S - 8, S - 10);
-            using var brace = new Pen(Pal.C(84, 66, 44), 2f);
-            g.DrawLine(brace, 5, 7, S - 5, S - 5);
+            g.Clear(Color.Transparent);
+            DropShadow(g, 4, 5, S - 8, S - 6, 70);
+            BeveledRect(g, 4, 6, S - 8, S - 11, Pal.C(126, 96, 60), 3f);
+            using (var plank = new Pen(WithA(Pal.C(78, 56, 34), 160), 1.1f))
+                for (int y = 13; y <= 25; y += 6) g.DrawLine(plank, 5, y, S - 5, y);
+            using (var brace = new Pen(Pal.C(74, 56, 40), 2.1f))
+            {
+                g.DrawLine(brace, 6, 8, S - 6, S - 8);
+                g.DrawLine(brace, 6, S - 8, S - 6, 8);
+            }
+            using (var band = new Pen(Pal.C(72, 72, 76), 2f))
+            {
+                g.DrawLine(band, 5, 13, S - 5, 13);
+                g.DrawLine(band, 5, 25, S - 5, 25);
+            }
+            using (var nail = new SolidBrush(Pal.C(180, 150, 90)))
+                foreach (var (x, y) in new[] { (7, 9), (28, 9), (7, 27), (28, 27) }) g.FillEllipse(nail, x, y, 2, 2);
         });
-        Noise(b, 806, 7);
+        Noise(b, 806, 3);
         return b;
     }
 
@@ -1098,19 +1275,24 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(120, 105, 50));
-            using (var ring = new Pen(Pal.C(40, 38, 26), 3f))
-                g.DrawEllipse(ring, 7, 7, 22, 22);
-            using (var core = new SolidBrush(Pal.C(255, 230, 120)))
+            var tone = Pal.C(112, 104, 56);
+            PanelBase(g, tone);
+            using (var halo = new SolidBrush(WithA(Pal.C(255, 230, 120), 52))) g.FillEllipse(halo, 5, 5, 26, 26);
+            using (var ring = new Pen(Pal.C(38, 38, 26), 3.2f)) g.DrawEllipse(ring, 7, 7, 22, 22);
+            using (var ring2 = new Pen(Pal.C(174, 154, 72), 1.3f)) g.DrawEllipse(ring2, 10, 10, 16, 16);
+            using (var core = new LinearGradientBrush(new PointF(13, 12), new PointF(23, 24), Pal.C(255, 255, 185), Pal.C(240, 178, 58)))
                 g.FillEllipse(core, 13, 13, 10, 10);
-            using (var halo = new SolidBrush(Pal.CA(90, Pal.C(255, 220, 90))))
-                g.FillEllipse(halo, 10, 10, 16, 16);
-            // hazard corners
-            using var hz = new Pen(Pal.C(210, 170, 40), 2f);
-            g.DrawLine(hz, 3, S - 4, 8, S - 9);
-            g.DrawLine(hz, S - 3, 4, S - 8, 9);
+            using (var vane = new Pen(Pal.C(54, 52, 34), 1.8f))
+                for (int i = 0; i < 4; i++)
+                {
+                    float a = i * MathF.PI / 2f + MathF.PI / 4f;
+                    g.DrawLine(vane, 18 + MathF.Cos(a) * 8, 18 + MathF.Sin(a) * 8, 18 + MathF.Cos(a) * 12, 18 + MathF.Sin(a) * 12);
+                }
+            using var hz = new Pen(Pal.C(230, 184, 58), 2f);
+            g.DrawLine(hz, 4, S - 5, 10, S - 11);
+            g.DrawLine(hz, S - 4, 5, S - 10, 11);
         });
-        Noise(b, 807, 5);
+        Noise(b, 807, 2);
         return b;
     }
 
@@ -1118,19 +1300,20 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(44, 62, 88));
-            using (var cell = new SolidBrush(Pal.C(60, 96, 148)))
-                g.FillRectangle(cell, 4, 4, S - 8, S - 8);
-            using (var gl = new Pen(Pal.C(32, 48, 70), 1f))
+            PanelBase(g, Pal.C(44, 62, 90));
+            BeveledRect(g, 5, 5, S - 10, S - 12, Pal.C(44, 78, 126), 2f);
+            using (var cell = new LinearGradientBrush(new PointF(6, 6), new PointF(30, 28), Pal.C(70, 126, 188), Pal.C(28, 52, 88)))
+                g.FillRectangle(cell, 7, 7, S - 14, S - 16);
+            using (var grid = new Pen(Pal.C(22, 36, 58), 1.2f))
                 for (int i = 1; i < 3; i++)
                 {
-                    g.DrawLine(gl, 4, 4 + i * 9, S - 4, 4 + i * 9);
-                    g.DrawLine(gl, 4 + i * 9, 4, 4 + i * 9, S - 4);
+                    g.DrawLine(grid, 7, 7 + i * 7, S - 7, 7 + i * 7);
+                    g.DrawLine(grid, 7 + i * 7, 7, 7 + i * 7, S - 9);
                 }
-            using (var glare = new Pen(Pal.CA(120, Pal.C(160, 220, 255)), 2f))
-                g.DrawLine(glare, 8, S - 12, S - 14, 6);
+            using (var glare = new Pen(WithA(Pal.C(190, 235, 255), 145), 1.7f))
+                g.DrawLine(glare, 9, S - 13, S - 12, 8);
         });
-        Noise(b, 808, 4);
+        Noise(b, 808, 2);
         return b;
     }
 
@@ -1138,13 +1321,15 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(84, 92, 100));
-            using var pole = new Pen(Pal.C(160, 168, 176), 3f);
-            g.DrawLine(pole, 18, 30, 18, 12);
-            using var nac = new SolidBrush(Pal.C(200, 208, 216));
-            g.FillEllipse(nac, 15, 8, 6, 6);
+            g.Clear(Color.Transparent);
+            DropShadow(g, 8, 20, 20, 12, 58);
+            BeveledRect(g, 5, 25, 26, 7, Pal.C(74, 82, 90), 2f);
+            using var pole = new Pen(Pal.C(166, 176, 184), 3f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            g.DrawLine(pole, 18, 28, 18, 12);
+            using (var shade = new Pen(Pal.C(88, 96, 104), 1f)) g.DrawLine(shade, 20, 28, 20, 13);
+            BeveledRect(g, 14, 8, 8, 7, Pal.C(196, 204, 210), 3f);
         });
-        Noise(b, 809, 5);
+        Noise(b, 809, 2);
         return b;
     }
 
@@ -1166,16 +1351,20 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(62, 110, 84));
-            using (var box = new SolidBrush(Pal.C(34, 56, 44)))
-                g.FillRectangle(box, 8, 7, 20, 22);
-            using var grid = new Pen(Pal.C(70, 120, 92), 1f);
-            for (int i = 0; i < 4; i++)
-                g.DrawRectangle(grid, 10, 9 + i * 5, 16, 4); // charge pip frames
-            using var bolt = new SolidBrush(Pal.C(230, 220, 90));
-            g.FillPolygon(bolt, new[] { new PointF(19, 2), new PointF(24, 2), new PointF(21, 8), new PointF(15, 8) });
+            PanelBase(g, Pal.C(54, 106, 84));
+            BeveledRect(g, 8, 7, 20, 22, Pal.C(34, 58, 48), 3f);
+            using var grid = new Pen(Pal.C(76, 132, 104), 1f);
+            for (int i = 0; i < 4; i++) g.DrawRectangle(grid, 10, 10 + i * 4.5f, 16, 3.2f);
+            using (var fill = new SolidBrush(WithA(Pal.Good, 165)))
+            {
+                g.FillRectangle(fill, 11, 19, 14, 2.2f);
+                g.FillRectangle(fill, 11, 23.5f, 14, 2.2f);
+            }
+            using (var bolt = new SolidBrush(Pal.C(250, 228, 92)))
+                g.FillPolygon(bolt, new[] { new PointF(18, 2), new PointF(24, 2), new PointF(21, 9), new PointF(15, 9) });
+            using (var glow = new SolidBrush(WithA(Pal.C(250, 228, 92), 50))) g.FillEllipse(glow, 13, 0, 13, 12);
         });
-        Noise(b, 810, 4);
+        Noise(b, 810, 2);
         return b;
     }
 
@@ -1183,12 +1372,23 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(96, 100, 110));
-            using var brace = new Pen(Pal.C(66, 70, 78), 2f);
-            g.DrawLine(brace, 4, 4, S - 4, S - 4);
-            g.DrawLine(brace, S - 4, 4, 4, S - 4);
+            g.Clear(Color.Transparent);
+            DropShadow(g, 3, 5, S - 6, S - 7, 75);
+            BeveledRect(g, 2.5f, 4, S - 5, S - 8, Pal.C(96, 102, 112), 3f);
+            using (var plate = new Pen(Pal.C(62, 68, 78), 2f))
+            {
+                g.DrawLine(plate, 5, 10, S - 5, 10);
+                g.DrawLine(plate, 5, 20, S - 5, 20);
+                g.DrawLine(plate, 12, 4, 12, S - 5);
+                g.DrawLine(plate, 24, 4, 24, S - 5);
+            }
+            using (var brace = new Pen(Pal.C(54, 60, 70), 2.2f))
+            {
+                g.DrawLine(brace, 5, 6, S - 6, S - 7);
+                g.DrawLine(brace, S - 6, 6, 5, S - 7);
+            }
         });
-        Noise(b, 811, 6);
+        Noise(b, 811, 3);
         return b;
     }
 
@@ -1197,21 +1397,17 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(148, 112, 72));
-            // vertical planks
-            using var plank = new Pen(Pal.C(112, 82, 52), 1.4f);
-            for (int x = 8; x < S - 6; x += 7) g.DrawLine(plank, x, 4, x, S - 4);
-            // dark frame
-            using var frame = new Pen(Pal.C(70, 52, 34), 2f);
-            g.DrawRectangle(frame, 3, 3, S - 7, S - 7);
-            // metal band across the middle
-            using var band = new Pen(Pal.C(120, 126, 138), 3f);
-            g.DrawLine(band, 4, S / 2, S - 5, S / 2);
-            // handle
-            using var hb = new SolidBrush(Pal.C(220, 190, 90));
-            g.FillEllipse(hb, S - 12, S / 2 - 5, 5, 9);
+            g.Clear(Color.Transparent);
+            DropShadow(g, 3, 5, S - 6, S - 7, 70);
+            BeveledRect(g, 4, 4, S - 8, S - 8, Pal.C(142, 104, 64), 3f);
+            using (var plank = new Pen(Pal.C(94, 66, 40), 1.2f))
+                for (int x = 10; x < S - 7; x += 7) g.DrawLine(plank, x, 5, x, S - 5);
+            using (var band = new LinearGradientBrush(new PointF(5, 15), new PointF(31, 21), Pal.C(145, 150, 160), Pal.C(78, 84, 94)))
+                g.FillRectangle(band, 5, 15, S - 10, 5);
+            using (var rim = new Pen(Pal.C(62, 44, 28), 1.5f)) g.DrawRectangle(rim, 4, 4, S - 8, S - 8);
+            using (var hb = new SolidBrush(Pal.C(226, 190, 84))) g.FillEllipse(hb, S - 12, S / 2f - 4, 4.5f, 8);
         });
-        Noise(b, 812, 5);
+        Noise(b, 812, 3);
         return b;
     }
 
@@ -1384,26 +1580,36 @@ public static class Sprites
 
     private static Bitmap BakeTurretBase(bool heavy)
     {
-        var tone = heavy ? Pal.C(116, 64, 74) : Pal.C(96, 64, 84);
+        var tone = heavy ? Pal.C(116, 62, 72) : Pal.C(92, 66, 88);
         var b = Make((g, bmp) =>
         {
             PanelBase(g, tone);
-            // octagonal armored pivot
+            float cx = 18, cy = 18;
             var pts = new PointF[8];
+            float r = heavy ? 12.5f : 10.5f;
             for (int i = 0; i < 8; i++)
             {
                 float a = i * MathF.PI / 4f + MathF.PI / 8f;
-                pts[i] = new PointF(18 + MathF.Cos(a) * (heavy ? 12 : 10), 18 + MathF.Sin(a) * (heavy ? 12 : 10));
+                pts[i] = new PointF(cx + MathF.Cos(a) * r, cy + MathF.Sin(a) * r);
             }
-            using (var br = new SolidBrush(Pal.Darken(tone, 0.3f)))
-                g.FillPolygon(br, pts);
-            using (var br = new SolidBrush(Pal.Lighten(tone, 0.15f)))
-                g.FillEllipse(br, 13, 13, 10, 10);
+            using (var baseLg = new LinearGradientBrush(new PointF(7, 7), new PointF(29, 29), Pal.Lighten(tone, 0.18f), Pal.Darken(tone, 0.38f)))
+                g.FillPolygon(baseLg, pts);
+            using (var edge = new Pen(Pal.C(32, 28, 34), 1.2f)) g.DrawPolygon(edge, pts);
+            using (var barrel = new Pen(Pal.C(184, 178, 170), heavy ? 4.2f : 3.2f))
+            {
+                barrel.StartCap = LineCap.Round; barrel.EndCap = LineCap.Square;
+                g.DrawLine(barrel, cx, cy, cx + (heavy ? 14 : 12), cy - 4);
+            }
+            using (var bore = new Pen(Pal.C(52, 50, 52), heavy ? 1.7f : 1.2f)) g.DrawLine(bore, cx + 7, cy - 2, cx + (heavy ? 15 : 13), cy - 4);
+            BeveledRect(g, 12.5f, 12.5f, 11, 11, Pal.Lighten(tone, 0.12f), 5f);
             if (heavy)
-                using (var hz = new Pen(Pal.C(214, 174, 60), 2f))
-                    g.DrawArc(hz, 8, 8, 20, 20, 30, 60);
+            {
+                using var hz = new Pen(Pal.C(224, 176, 58), 2f);
+                g.DrawArc(hz, 7, 7, 22, 22, 22, 72);
+                g.DrawArc(hz, 7, 7, 22, 22, 202, 72);
+            }
         });
-        Noise(b, heavy ? 813 : 812, 5);
+        Noise(b, heavy ? 813 : 812, 2);
         return b;
     }
 
@@ -1412,15 +1618,21 @@ public static class Sprites
         var b = Make((g, bmp) =>
         {
             g.Clear(Color.Transparent);
-            using var legs = new Pen(Pal.C(96, 76, 50), 2.4f);
-            g.DrawLine(legs, 10, S - 4, 14, 10);
-            g.DrawLine(legs, S - 10, S - 4, S - 14, 10);
-            using (var deck = new SolidBrush(Pal.C(126, 100, 66)))
-                g.FillRectangle(deck, 8, 6, S - 16, 8);
-            using (var rail = new Pen(Pal.C(84, 66, 44), 1.6f))
-                g.DrawRectangle(rail, 8, 3, S - 16, 10);
+            DropShadow(g, 6, 23, 24, 9, 70);
+            using var legs = new Pen(Pal.C(94, 70, 44), 2.3f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            g.DrawLine(legs, 9, S - 5, 14, 12);
+            g.DrawLine(legs, S - 9, S - 5, S - 14, 12);
+            using (var brace = new Pen(Pal.C(70, 52, 34), 1.4f))
+            {
+                g.DrawLine(brace, 11, 24, 25, 13);
+                g.DrawLine(brace, 25, 24, 11, 13);
+            }
+            BeveledRect(g, 7, 6, S - 14, 10, Pal.C(130, 100, 62), 2f);
+            using (var rail = new Pen(Pal.C(78, 58, 36), 1.4f))
+                g.DrawRectangle(rail, 7, 3, S - 14, 10);
+            using (var flag = new SolidBrush(Pal.Warn)) g.FillPolygon(flag, new[] { new PointF(18, 4), new PointF(27, 7), new PointF(18, 10) });
         });
-        Noise(b, 814, 5);
+        Noise(b, 814, 2);
         return b;
     }
 
@@ -1428,18 +1640,23 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(70, 96, 120));
-            using (var dome = new SolidBrush(Pal.C(96, 128, 152)))
-                g.FillEllipse(dome, 5, 5, 26, 26);
-            using (var door = new SolidBrush(Pal.C(30, 38, 48)))
-                g.FillRectangle(door, 15, 22, 7, 12);
-            using (var win = new SolidBrush(Pal.C(255, 220, 140))) // warm window light
+            PanelBase(g, Pal.C(62, 88, 116));
+            using (var dome = new LinearGradientBrush(new PointF(6, 6), new PointF(30, 30), Pal.C(112, 146, 170), Pal.C(48, 66, 88)))
+                g.FillEllipse(dome, 5.5f, 5.5f, 25, 24);
+            using (var rim = new Pen(Pal.C(34, 44, 58), 1.4f)) g.DrawEllipse(rim, 5.5f, 5.5f, 25, 24);
+            FillRound(g, Pal.C(24, 30, 40), 15, 21, 7, 12, 2f);
+            using (var win = new SolidBrush(Pal.C(255, 218, 126)))
             {
-                g.FillEllipse(win, 10, 12, 5, 5);
-                g.FillEllipse(win, 21, 12, 5, 5);
+                g.FillEllipse(win, 10, 13, 5, 5);
+                g.FillEllipse(win, 21, 13, 5, 5);
+            }
+            using (var glow = new SolidBrush(WithA(Pal.C(255, 218, 126), 42)))
+            {
+                g.FillEllipse(glow, 8, 11, 9, 9);
+                g.FillEllipse(glow, 19, 11, 9, 9);
             }
         });
-        Noise(b, 815, 4);
+        Noise(b, 815, 2);
         return b;
     }
 
@@ -1448,17 +1665,29 @@ public static class Sprites
         var b = Make((g, bmp) =>
         {
             g.Clear(Color.Transparent);
-            using var wood = new SolidBrush(Pal.C(130, 100, 76));
-            g.FillEllipse(wood, 6, 8, 24, 20);
-            using var rim = new Pen(Pal.C(84, 64, 46), 1.4f);
-            g.FillEllipse(Pal.B(Pal.C(84, 64, 46)), 4, 14, 5, 5);   // stools
-            g.FillEllipse(Pal.B(Pal.C(84, 64, 46)), 27, 14, 5, 5);
-            g.FillEllipse(Pal.B(Pal.C(84, 64, 46)), 15, 5, 5, 5);
-            using var plate = new SolidBrush(Pal.C(210, 214, 218));
-            g.FillEllipse(plate, 12, 13, 5, 5);
-            g.FillEllipse(plate, 19, 17, 5, 5);
+            DropShadow(g, 5, 13, S - 10, 16, 58);
+            using (var stool = new SolidBrush(Pal.C(84, 64, 44)))
+            {
+                g.FillEllipse(stool, 4, 15, 6, 6);
+                g.FillEllipse(stool, 26, 15, 6, 6);
+                g.FillEllipse(stool, 15, 5, 6, 6);
+                g.FillEllipse(stool, 15, 26, 6, 6);
+            }
+            using (var wood = new LinearGradientBrush(new PointF(6, 8), new PointF(30, 28), Pal.C(156, 118, 78), Pal.C(92, 66, 44)))
+                g.FillEllipse(wood, 6, 8, 24, 20);
+            using (var rim = new Pen(Pal.C(70, 50, 34), 1.4f)) g.DrawEllipse(rim, 6, 8, 24, 20);
+            using (var grain = new Pen(WithA(Pal.C(72, 48, 30), 95), 1f))
+            {
+                g.DrawArc(grain, 9, 12, 18, 9, 185, 170);
+                g.DrawArc(grain, 10, 15, 16, 8, 185, 170);
+            }
+            using (var plate = new SolidBrush(Pal.C(218, 222, 224)))
+            {
+                g.FillEllipse(plate, 12, 14, 5, 5);
+                g.FillEllipse(plate, 19, 17, 5, 5);
+            }
         });
-        Noise(b, 816, 4);
+        Noise(b, 816, 2);
         return b;
     }
 
@@ -1467,12 +1696,14 @@ public static class Sprites
         var b = Make((g, bmp) =>
         {
             g.Clear(Color.Transparent);
-            using (var halo = new SolidBrush(Pal.CA(46, Pal.C(255, 220, 130))))
-                g.FillEllipse(halo, 2, 0, 32, 32);
-            using var pole = new Pen(Pal.C(70, 74, 82), 2.2f);
-            g.DrawLine(pole, 18, 32, 18, 12);
-            using var bulb = new SolidBrush(Pal.C(255, 226, 140));
-            g.FillEllipse(bulb, 14, 6, 8, 8);
+            using (var halo = new SolidBrush(WithA(Pal.C(255, 220, 130), 44))) g.FillEllipse(halo, 1, 0, 34, 34);
+            using (var halo2 = new SolidBrush(WithA(Pal.C(255, 238, 170), 42))) g.FillEllipse(halo2, 9, 3, 18, 18);
+            using var pole = new Pen(Pal.C(78, 82, 90), 2.2f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            g.DrawLine(pole, 18, 31, 18, 13);
+            BeveledRect(g, 14, 26, 8, 5, Pal.C(76, 78, 84), 2f);
+            using var bulb = new SolidBrush(Pal.C(255, 230, 142));
+            g.FillEllipse(bulb, 14, 7, 8, 8);
+            using (var cap = new Pen(Pal.C(116, 100, 68), 1.2f)) g.DrawEllipse(cap, 14, 7, 8, 8);
         });
         return b;
     }
@@ -1481,18 +1712,22 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            g.Clear(Pal.C(52, 62, 44));
+            g.Clear(Color.Transparent);
+            DropShadow(g, 3, 6, S - 6, S - 8, 55);
+            BeveledRect(g, 3, 4, S - 6, S - 8, Pal.C(56, 76, 48), 4f);
+            using (var soil = new LinearGradientBrush(new PointF(5, 7), new PointF(31, 29), Pal.C(70, 58, 40), Pal.C(42, 36, 28)))
+                FillRound(g, soil, 6, 7, S - 12, S - 14, 3f);
             var r = new Random(817);
-            using var sprout = new Pen(Pal.C(92, 160, 96), 1.6f);
-            for (int i = 0; i < 9; i++)
-            {
-                int x = 6 + (i % 3) * 12, y = 6 + (i / 3) * 12;
-                g.DrawLine(sprout, x, y + 4, x, y);
-                using var petal = new SolidBrush(i % 2 == 0 ? Pal.C(150, 220, 130) : Pal.C(230, 160, 190));
-                g.FillEllipse(petal, x - 2, y - 2, 4, 4);
-            }
+            for (int row = 0; row < 3; row++)
+                for (int i = 0; i < 3; i++)
+                {
+                    float x = 9 + i * 9 + r.Next(-1, 2), y = 11 + row * 7 + r.Next(-1, 2);
+                    using (var stem = new Pen(Pal.C(78, 150, 76), 1.4f)) g.DrawLine(stem, x, y + 4, x, y);
+                    using var leaf = new SolidBrush((i + row) % 2 == 0 ? Pal.C(124, 210, 104) : Pal.C(216, 128, 168));
+                    g.FillEllipse(leaf, x - 2.5f, y - 2, 5, 4);
+                }
         });
-        Noise(b, 817, 6);
+        Noise(b, 817, 2);
         return b;
     }
 
@@ -1500,18 +1735,23 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(140, 148, 158));
-            using (var bed = new SolidBrush(Pal.C(225, 230, 235)))
-                g.FillRectangle(bed, 7, 9, 22, 12);
-            using (var pillow = new SolidBrush(Pal.C(245, 248, 250)))
-                g.FillRectangle(pillow, 7, 9, 6, 12);
-            using (var cross = new SolidBrush(Pal.C(215, 70, 80)))
+            PanelBase(g, Pal.C(132, 142, 154));
+            FillRound(g, Pal.C(70, 82, 92), 6, 9, 24, 14, 3f);
+            using (var sheet = new LinearGradientBrush(new PointF(7, 9), new PointF(29, 22), Pal.C(248, 252, 250), Pal.C(178, 196, 210)))
+                FillRound(g, sheet, 8, 10, 20, 11, 2f);
+            FillRound(g, Pal.C(250, 252, 252), 8, 10, 6, 11, 1.5f);
+            using (var cross = new SolidBrush(Pal.C(218, 64, 76)))
             {
-                g.FillRectangle(cross, 21, 11, 6, 2);
-                g.FillRectangle(cross, 23, 9, 2, 6);
+                g.FillRectangle(cross, 21, 12.5f, 6, 2.2f);
+                g.FillRectangle(cross, 22.9f, 10.6f, 2.2f, 6);
+            }
+            using (var leg = new SolidBrush(Pal.C(58, 64, 70)))
+            {
+                g.FillRectangle(leg, 8, 22, 3, 4);
+                g.FillRectangle(leg, 25, 22, 3, 4);
             }
         });
-        Noise(b, 818, 3);
+        Noise(b, 818, 2);
         return b;
     }
 
@@ -1519,18 +1759,22 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(96, 128, 150));
-            using (var bench = new SolidBrush(Pal.C(46, 62, 74)))
-                g.FillRectangle(bench, 5, 18, 26, 10);
-            using (var screen = new SolidBrush(Pal.C(120, 230, 160)))
-                g.FillRectangle(screen, 8, 6, 9, 11);
-            using var trace = new Pen(Pal.C(20, 80, 40), 1f);
-            g.DrawLine(trace, 9, 12, 16, 9);
-            using var dish = new Pen(Pal.C(200, 212, 222), 1.6f);
-            g.DrawLine(dish, 26, 18, 26, 8);
-            g.DrawArc(dish, 21, 3, 10, 8, 200, 140);
+            PanelBase(g, Pal.C(86, 120, 146));
+            FillRound(g, Pal.C(36, 52, 64), 5, 19, 26, 9, 2f);
+            using (var screenGlow = new SolidBrush(WithA(Pal.C(120, 245, 176), 48))) g.FillEllipse(screenGlow, 5, 3, 16, 17);
+            BeveledRect(g, 7, 6, 11, 11, Pal.C(72, 150, 120), 2f);
+            using (var trace = new Pen(Pal.C(160, 250, 180), 1.1f))
+            {
+                g.DrawLine(trace, 9, 12, 16, 8);
+                g.DrawLine(trace, 9, 14, 16, 14);
+            }
+            using var dish = new Pen(Pal.C(210, 222, 232), 1.8f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            g.DrawLine(dish, 26, 19, 26, 8);
+            g.DrawArc(dish, 21, 3, 10, 8, 200, 150);
+            using (var vial = new SolidBrush(Pal.C(120, 220, 235))) g.FillRectangle(vial, 21, 15, 4, 8);
+            using (var vial2 = new SolidBrush(Pal.C(190, 120, 255))) g.FillRectangle(vial2, 27, 14, 3, 9);
         });
-        Noise(b, 819, 4);
+        Noise(b, 819, 2);
         return b;
     }
 
@@ -1538,20 +1782,20 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            g.Clear(Pal.BeltCol);
-            using (var rail = new SolidBrush(Pal.C(32, 36, 42)))
+            DrawLogisticsBase(g);
+            using (var ring = new SolidBrush(Pal.C(92, 104, 118))) g.FillEllipse(ring, 7, 7, 22, 22);
+            using (var lg = new LinearGradientBrush(new PointF(8, 8), new PointF(28, 28), Pal.C(126, 142, 158), Pal.C(48, 58, 70)))
+                g.FillEllipse(lg, 9, 9, 18, 18);
+            using (var core = new SolidBrush(Pal.C(30, 36, 44))) g.FillEllipse(core, 14, 14, 8, 8);
+            using (var a = new Pen(WithA(Pal.Accent, 210), 1.8f))
             {
-                g.FillRectangle(rail, 0, 2, S, 3);
-                g.FillRectangle(rail, 0, S - 5, S, 3);
-                g.FillRectangle(rail, 2, 0, 3, S);
-                g.FillRectangle(rail, S - 5, 0, 3, S);
+                a.StartCap = LineCap.Round; a.EndCap = LineCap.Round;
+                g.DrawLine(a, 18, 18, 27, 11);
+                g.DrawLine(a, 18, 18, 27, 18);
+                g.DrawLine(a, 18, 18, 27, 25);
             }
-            using (var hub = new SolidBrush(Pal.C(84, 94, 106)))
-                g.FillEllipse(hub, 8, 8, 20, 20);
-            using var hubIn = new SolidBrush(Pal.C(56, 64, 74));
-            g.FillEllipse(hubIn, 12, 12, 12, 12);
         });
-        Noise(b, 820, 4);
+        Noise(b, 820, 2);
         return b;
     }
 
@@ -2361,28 +2605,23 @@ public static class Sprites
         var b = Make((g, bmp) =>
         {
             g.Clear(Color.Transparent);
-            // ore bed: darker dirt patch (teal-tinted)
-            using (var bed = new SolidBrush(Pal.CA(150, Pal.C(20, 30, 30))))
-                g.FillEllipse(bed, 2, 3, S - 4, S - 7);
-            using (var sh = new SolidBrush(Pal.CA(80, Pal.C(8, 10, 12))))
-                g.FillEllipse(sh, 5, 8, 22, 18);
+            using (var bed = new SolidBrush(WithA(Pal.C(18, 34, 36), 165)))
+                g.FillEllipse(bed, 2, 4, S - 4, S - 8);
+            DropShadow(g, 4, 7, S - 8, S - 10, 65);
             var r = new Random(6001);
-            for (int i = 0; i < 6; i++)
+            for (int i = 0; i < 7; i++)
             {
-                int size = r.Next(7, 12);
-                int x = 3 + (i % 3) * 10 + r.Next(-2, 3);
-                int y = 3 + (i / 3) * 13 + r.Next(-2, 3);
-                using (var br = new SolidBrush(Pal.C(38, 128, 128)))
-                    g.FillEllipse(br, x, y, size, size);
-                using (var hi = new SolidBrush(Pal.C(86, 196, 188)))
-                    g.FillEllipse(hi, x + 1, y + 1, size / 2, size / 2);
-                using (var sp = new SolidBrush(Pal.C(160, 240, 232)))
-                    g.FillRectangle(sp, x + size / 3, y + size / 3, 2, 2);
-                using (var pen = new Pen(Pal.C(18, 70, 70), 1f))
-                    g.DrawEllipse(pen, x, y, size, size);
+                float size = r.Next(6, 12);
+                float x = 4 + (i % 3) * 10 + r.Next(-2, 3);
+                float y = 4 + (i / 3) * 9 + r.Next(-1, 3);
+                var ore = Mix(Pal.C(36, 118, 124), Pal.C(56, 160, 150), r.Next(100) / 100f);
+                using (var br = new SolidBrush(ore)) g.FillEllipse(br, x, y, size, size * 0.82f);
+                using (var hi = new SolidBrush(Pal.C(124, 238, 220))) g.FillEllipse(hi, x + 1.2f, y + 1, size * 0.38f, size * 0.28f);
+                using (var raw = new SolidBrush(WithA(Pal.C(210, 112, 70), 135))) g.FillEllipse(raw, x + size * 0.45f, y + size * 0.43f, size * 0.24f, size * 0.18f);
+                using (var edge = new Pen(Pal.C(16, 70, 74), 1f)) g.DrawEllipse(edge, x, y, size, size * 0.82f);
             }
         });
-        Noise(b, 601, 8);
+        Noise(b, 601, 4);
         return b;
     }
 
@@ -2394,27 +2633,30 @@ public static class Sprites
         var b = new Bitmap(S, S);
         using (var g = Graphics.FromImage(b))
         {
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            // quarter curve: top-center -> top-right corner -> right-center
-            var p0 = new PointF(S / 2f, 4);
-            var p1 = new PointF(S - 5, 5);
-            var p2 = new PointF(S - 4, S / 2f);
-            using var pen = new Pen(Pal.CA(210, Pal.Accent), 2.2f);
-            g.DrawBezier(pen, p0, p1, p2, p2);
-            // three chevrons riding the curve
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(Color.Transparent);
+            var p0 = new PointF(S / 2f, 3.5f);
+            var p1 = new PointF(S - 5.5f, 4.5f);
+            var p2 = new PointF(S - 4f, S / 2f);
+            using (var glow = new Pen(WithA(Pal.Accent, 58), 5f))
+                g.DrawBezier(glow, p0, p1, p2, p2);
+            using (var pen = new Pen(WithA(Pal.C(125, 222, 255), 210), 2.1f))
+                g.DrawBezier(pen, p0, p1, p2, p2);
             for (int k = 0; k < 3; k++)
             {
-                float t = 0.18f + k * 0.30f;
+                float t = 0.22f + k * 0.27f;
                 float mt = 1 - t;
                 float bx = mt * mt * p0.X + 2 * mt * t * p1.X + t * t * p2.X;
                 float by = mt * mt * p0.Y + 2 * mt * t * p1.Y + t * t * p2.Y;
                 float tx = 2 * mt * (p1.X - p0.X) + 2 * t * (p2.X - p1.X);
                 float ty = 2 * mt * (p1.Y - p0.Y) + 2 * t * (p2.Y - p1.Y);
-                float len = MathF.Sqrt(tx * tx + ty * ty);
+                float len = MathF.Max(0.001f, MathF.Sqrt(tx * tx + ty * ty));
                 tx /= len; ty /= len;
-                using var ch = new Pen(Pal.CA(230, Pal.Accent), 2f);
-                g.DrawLine(ch, bx - tx * 3 - ty * 2.6f, by - ty * 3 + tx * 2.6f, bx + tx * 2, by + ty * 2);
-                g.DrawLine(ch, bx - tx * 3 + ty * 2.6f, by - ty * 3 - tx * 2.6f, bx + tx * 2, by + ty * 2);
+                using var ch = new Pen(WithA(Pal.C(180, 240, 255), 230), 1.8f);
+                ch.StartCap = LineCap.Round;
+                ch.EndCap = LineCap.Round;
+                g.DrawLine(ch, bx - tx * 3 - ty * 2.4f, by - ty * 3 + tx * 2.4f, bx + tx * 2.1f, by + ty * 2.1f);
+                g.DrawLine(ch, bx - tx * 3 + ty * 2.4f, by - ty * 3 - tx * 2.4f, bx + tx * 2.1f, by + ty * 2.1f);
             }
         }
         return b;
@@ -2449,39 +2691,44 @@ public static class Sprites
         var b = new Bitmap(S, S);
         using (var g = Graphics.FromImage(b))
         {
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            var surface = fast ? Pal.C(58, 74, 98) : Pal.BeltCol;
-            var railC = fast ? Pal.C(34, 42, 58) : Pal.C(32, 36, 42);
-            var roller = fast ? Pal.C(96, 116, 148) : Pal.C(70, 78, 88);
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(Color.Transparent);
+            var surface = fast ? Pal.C(48, 68, 98) : Pal.C(48, 55, 64);
+            var railC = fast ? Pal.C(28, 38, 58) : Pal.C(29, 34, 42);
+            var roller = fast ? Pal.C(88, 118, 156) : Pal.C(70, 80, 92);
+            var accent = fast ? Pal.C(120, 220, 255) : Pal.Accent;
             float cx = S, cy = 0;                       // arc center: top-right corner
-            // band exactly as thick as the straights (r 5..27) so the
-            // joints line up flush - no step between curve and neighbors
-            using (var pen = new Pen(surface, 22f))
-                g.DrawArc(pen, cx - 16, cy - 16, 32, 32, 90, 90);
-            using (var pen = new Pen(railC, 3f))        // rails flush with straight rails
+
+            using (var sh = new Pen(Color.FromArgb(48, 0, 0, 0), 24f))
+                g.DrawArc(sh, cx - 17, cy - 13, 34, 34, 90, 90);
+            using (var bed = new Pen(surface, 22f))
+                g.DrawArc(bed, cx - 16, cy - 16, 32, 32, 90, 90);
+            using (var hi = new Pen(WithA(Pal.Lighten(surface, 0.36f), 92), 15f))
+                g.DrawArc(hi, cx - 12, cy - 12, 24, 24, 110, 35);
+            using (var pen = new Pen(railC, 3.1f))
             {
                 g.DrawArc(pen, cx - 3.5f, cy - 3.5f, 7, 7, 90, 90);
                 g.DrawArc(pen, cx - 28.5f, cy - 28.5f, 57, 57, 90, 90);
             }
-            using (var pen = new Pen(roller, 2f))       // scrolling rollers (radial ticks)
+            using (var pen = new Pen(roller, fast ? 1.8f : 1.5f))
                 for (int k = 0; k < 8; k++)
                 {
-                    double a = (90 + (k * 11.25 + frame * 22.5) % 90) * Math.PI / 180;
+                    double a = (92 + (k * 11.25 + frame * (fast ? 18.0 : 22.5)) % 88) * Math.PI / 180;
                     float ca = (float)Math.Cos(a), sa = (float)Math.Sin(a);
-                    g.DrawLine(pen, cx + 7 * ca, cy + 7 * sa, cx + 25 * ca, cy + 25 * sa);
+                    g.DrawLine(pen, cx + 8 * ca, cy + 8 * sa, cx + 25 * ca, cy + 25 * sa);
                 }
-            // chevron riding the arc, pointing along the flow
             double mid = 135 * Math.PI / 180;
             float cm = (float)Math.Cos(mid), sm = (float)Math.Sin(mid);
             float tx = cx + 16f * cm, ty = cy + 16f * sm;
             float fx = (float)Math.Sin(mid), fy = -(float)Math.Cos(mid);
-            var accent = fast ? Pal.C(120, 220, 255) : Pal.Accent;
-            using var br = new SolidBrush(Pal.CA(220, accent));
+            using (var glow = new SolidBrush(WithA(accent, 45)))
+                g.FillEllipse(glow, tx - 6, ty - 6, 12, 12);
+            using var br = new SolidBrush(WithA(accent, fast ? 230 : 185));
             g.FillPolygon(br, new[]
             {
-                new PointF(tx, ty),
-                new PointF(tx - fx * 5 - cm * 3, ty - fy * 5 - sm * 3),
-                new PointF(tx - fx * 5 + cm * 3, ty - fy * 5 + sm * 3),
+                new PointF(tx + fx * 4f, ty + fy * 4f),
+                new PointF(tx - fx * 5.5f - cm * 3.2f, ty - fy * 5.5f - sm * 3.2f),
+                new PointF(tx - fx * 5.5f + cm * 3.2f, ty - fy * 5.5f + sm * 3.2f),
             });
         }
         return b;
@@ -2523,34 +2770,30 @@ public static class Sprites
         var b = new Bitmap(W, W);
         using (var g = Graphics.FromImage(b))
         {
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            var tone = Pal.C(88, 76, 92);
-            using (var baseB = new SolidBrush(tone)) g.FillRectangle(baseB, 1, 1, W - 2, W - 2);
-            using (var edge = new Pen(Pal.Darken(tone, 0.45f), 3f)) g.DrawRectangle(edge, 2, 2, W - 5, W - 5);
-            // heavy corner pylons
-            using (var pyl = new SolidBrush(Pal.C(60, 52, 66)))
-                foreach (var (px, py) in new[] { (6, 6), (W - 18, 6), (6, W - 18), (W - 18, W - 18) })
-                    g.FillRectangle(pyl, px, py, 12, 12);
-            using (var hl = new Pen(Pal.C(140, 120, 150), 2f))
-                foreach (var (px, py) in new[] { (6, 6), (W - 18, 6), (6, W - 18), (W - 18, W - 18) })
-                    g.DrawRectangle(hl, px, py, 12, 12);
-            // triple drill bit cluster in the middle
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            var tone = Pal.C(78, 70, 92);
+            using (var sh = new SolidBrush(Color.FromArgb(82, 0, 0, 0))) g.FillEllipse(sh, 9, W - 24, W - 18, 18);
+            using (var baseB = new LinearGradientBrush(new PointF(2, 2), new PointF(W - 2, W - 2), Pal.Lighten(tone, 0.17f), Pal.Darken(tone, 0.28f)))
+                g.FillRectangle(baseB, 2, 2, W - 4, W - 8);
+            using (var edge = new Pen(Pal.Darken(tone, 0.48f), 3f)) g.DrawRectangle(edge, 2, 2, W - 5, W - 9);
+            using (var grid = new Pen(WithA(Pal.C(42, 38, 52), 130), 1.3f))
+                for (int i = 1; i < 3; i++) { g.DrawLine(grid, i * W / 3f, 6, i * W / 3f, W - 10); g.DrawLine(grid, 6, i * W / 3f, W - 6, i * W / 3f); }
+            foreach (var (px, py) in new[] { (8, 8), (W - 22, 8), (8, W - 24), (W - 22, W - 24) })
+                BeveledRect(g, px, py, 14, 14, Pal.C(58, 52, 68), 3f);
             float c = W / 2f;
-            using (var ring = new Pen(Pal.C(52, 46, 56), 3f)) g.DrawEllipse(ring, c - 24, c - 24, 48, 48);
-            foreach (var (ox, oy) in new[] { (-14f, -10f), (14f, -10f), (0f, 14f) })
+            DrawGear(g, c, c, 28, Pal.C(84, 76, 92), Pal.C(30, 28, 36));
+            foreach (var (ox, oy) in new[] { (-17f, -12f), (17f, -12f), (0f, 18f) })
             {
-                var pts = new[] { new PointF(c + ox, c + oy - 10), new PointF(c + ox + 7, c + oy),
-                                  new PointF(c + ox, c + oy + 10), new PointF(c + ox - 7, c + oy) };
-                using var br = new SolidBrush(Pal.C(190, 140, 70));
+                var pts = new[] { new PointF(c + ox, c + oy - 11), new PointF(c + ox + 7, c + oy), new PointF(c + ox, c + oy + 11), new PointF(c + ox - 7, c + oy) };
+                using var br = new LinearGradientBrush(new PointF(c + ox - 8, c + oy - 11), new PointF(c + ox + 8, c + oy + 11), Pal.C(248, 196, 108), Pal.C(126, 78, 42));
                 g.FillPolygon(br, pts);
-                using var hl2 = new Pen(Pal.C(240, 200, 120), 1.4f);
-                g.DrawLine(hl2, c + ox, c + oy - 10, c + ox, c + oy + 8);
+                using var hl2 = new Pen(Pal.C(255, 226, 148), 1.4f);
+                g.DrawLine(hl2, c + ox, c + oy - 10, c + ox, c + oy + 9);
             }
-            // hazard chevrons on the north rim
-            using (var hz = new Pen(Pal.C(214, 174, 60), 4f))
-                for (int i = 0; i < 7; i++)
-                    g.DrawLine(hz, 10 + i * 14, 8, 18 + i * 14, 14);
+            using (var hz = new Pen(Pal.C(230, 178, 58), 4f))
+                for (int i = 0; i < 7; i++) g.DrawLine(hz, 10 + i * 14, 8, 18 + i * 14, 15);
         }
+        Noise(b, 870, 3);
         return b;
     }
 
@@ -2560,26 +2803,25 @@ public static class Sprites
         var b = new Bitmap(W, H);
         using (var g = Graphics.FromImage(b))
         {
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            var tone = Pal.C(96, 74, 62);
-            using (var baseB = new SolidBrush(tone)) g.FillRectangle(baseB, 1, 1, W - 2, H - 2);
-            using (var edge = new Pen(Pal.Darken(tone, 0.45f), 3f)) g.DrawRectangle(edge, 2, 2, W - 5, H - 5);
-            // brick courses
-            using (var brick = new Pen(Pal.Darken(tone, 0.2f), 1.6f))
-                for (int i = 1; i < 8; i++)
-                    g.DrawLine(brick, 4, i * (H - 8) / 8f, W - 4, i * (H - 8) / 8f);
-            // twin chimneys
-            using (var chim = new SolidBrush(Pal.C(70, 54, 46)))
-            {
-                g.FillRectangle(chim, W * 0.2f - 5, 6, 10, 26);
-                g.FillRectangle(chim, W * 0.8f - 5, 6, 10, 26);
-            }
-            // firebox with glowing maw
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            var tone = Pal.C(92, 70, 58);
+            using (var sh = new SolidBrush(Color.FromArgb(82, 0, 0, 0))) g.FillEllipse(sh, 7, H - 26, W - 14, 18);
+            using (var baseB = new LinearGradientBrush(new PointF(2, 2), new PointF(W - 2, H - 2), Pal.Lighten(tone, 0.14f), Pal.Darken(tone, 0.30f)))
+                g.FillRectangle(baseB, 2, 2, W - 4, H - 8);
+            using (var edge = new Pen(Pal.Darken(tone, 0.48f), 3f)) g.DrawRectangle(edge, 2, 2, W - 5, H - 9);
+            using (var brick = new Pen(WithA(Pal.C(58, 42, 36), 135), 1.3f))
+                for (int i = 1; i < 9; i++) g.DrawLine(brick, 5, i * (H - 12) / 9f, W - 5, i * (H - 12) / 9f);
+            BeveledRect(g, W * 0.2f - 5, 7, 10, 27, Pal.C(72, 54, 46), 2f);
+            BeveledRect(g, W * 0.8f - 5, 7, 10, 27, Pal.C(72, 54, 46), 2f);
             float c = W / 2f, fy = H * 0.72f;
-            using (var box = new SolidBrush(Pal.C(56, 42, 36))) g.FillRectangle(box, c - 22, fy - 12, 44, 26);
-            using (var fire = new SolidBrush(Pal.C(255, 150, 50))) g.FillRectangle(fire, c - 14, fy - 4, 28, 12);
-            using (var fire2 = new SolidBrush(Pal.C(255, 220, 90))) g.FillRectangle(fire2, c - 7, fy - 1, 14, 7);
+            BeveledRect(g, c - 24, fy - 14, 48, 28, Pal.C(54, 40, 34), 3f);
+            using (var glow = new SolidBrush(WithA(Pal.C(255, 118, 45), 65))) g.FillEllipse(glow, c - 21, fy - 7, 42, 18);
+            using (var fire = new LinearGradientBrush(new PointF(c - 14, fy - 6), new PointF(c + 14, fy + 10), Pal.C(255, 232, 96), Pal.C(226, 70, 34)))
+                g.FillRectangle(fire, c - 14, fy - 5, 28, 13);
+            using (var hz = new Pen(Pal.C(230, 178, 58), 3f))
+                for (int i = 0; i < 5; i++) g.DrawLine(hz, 8 + i * 12, H - 13, 14 + i * 12, H - 8);
         }
+        Noise(b, 871, 3);
         return b;
     }
 
@@ -2589,24 +2831,21 @@ public static class Sprites
         var b = new Bitmap(W, W);
         using (var g = Graphics.FromImage(b))
         {
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            var tone = Pal.C(110, 116, 126);
-            // cylinder body
-            using (var body = new SolidBrush(tone)) g.FillRectangle(body, W * 0.18f, W * 0.16f, W * 0.64f, W * 0.72f);
-            using (var shade = new SolidBrush(Pal.CA(80, Pal.C(30, 34, 40)))) g.FillRectangle(shade, W * 0.64f, W * 0.16f, W * 0.18f, W * 0.72f);
-            using (var dome = new SolidBrush(Pal.Lighten(tone, 0.2f))) g.FillEllipse(dome, W * 0.18f, W * 0.04f, W * 0.64f, W * 0.26f);
-            // bands
-            using (var band = new Pen(Pal.C(66, 72, 82), 2.5f))
-            {
-                g.DrawLine(band, W * 0.18f, W * 0.38f, W * 0.82f, W * 0.38f);
-                g.DrawLine(band, W * 0.18f, W * 0.58f, W * 0.82f, W * 0.58f);
-                g.DrawLine(band, W * 0.18f, W * 0.78f, W * 0.82f, W * 0.78f);
-            }
-            // access ladder
-            using (var lad = new Pen(Pal.C(150, 156, 166), 1.6f))
-                for (int i = 0; i < 9; i++)
-                    g.DrawLine(lad, W * 0.26f, W * 0.22f + i * (W * 0.06f), W * 0.30f, W * 0.22f + i * (W * 0.06f));
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            var tone = Pal.C(112, 120, 132);
+            using (var sh = new SolidBrush(Color.FromArgb(70, 0, 0, 0))) g.FillEllipse(sh, 10, W - 18, W - 20, 12);
+            using (var body = new LinearGradientBrush(new PointF(W * 0.18f, W * 0.16f), new PointF(W * 0.82f, W * 0.88f), Pal.Lighten(tone, 0.22f), Pal.Darken(tone, 0.24f)))
+                g.FillRectangle(body, W * 0.18f, W * 0.16f, W * 0.64f, W * 0.72f);
+            using (var shade = new SolidBrush(WithA(Pal.C(28, 34, 42), 65))) g.FillRectangle(shade, W * 0.64f, W * 0.16f, W * 0.18f, W * 0.72f);
+            using (var dome = new LinearGradientBrush(new PointF(W * 0.18f, W * 0.04f), new PointF(W * 0.82f, W * 0.30f), Pal.Lighten(tone, 0.35f), tone))
+                g.FillEllipse(dome, W * 0.18f, W * 0.04f, W * 0.64f, W * 0.26f);
+            using (var edge = new Pen(Pal.C(62, 70, 80), 2f)) g.DrawEllipse(edge, W * 0.18f, W * 0.04f, W * 0.64f, W * 0.26f);
+            using (var band = new Pen(Pal.C(66, 74, 86), 2.5f))
+                for (int i = 0; i < 3; i++) g.DrawLine(band, W * 0.18f, W * (0.38f + i * 0.20f), W * 0.82f, W * (0.38f + i * 0.20f));
+            using (var lad = new Pen(Pal.C(176, 184, 194), 1.6f))
+                for (int i = 0; i < 9; i++) g.DrawLine(lad, W * 0.26f, W * 0.22f + i * W * 0.06f, W * 0.31f, W * 0.22f + i * W * 0.06f);
         }
+        Noise(b, 872, 2);
         return b;
     }
 
@@ -2616,32 +2855,27 @@ public static class Sprites
         var b = new Bitmap(W, W);
         using (var g = Graphics.FromImage(b))
         {
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            var tone = Pal.C(70, 100, 110);
-            using (var baseB = new SolidBrush(tone)) g.FillRectangle(baseB, 1, 1, W - 2, W - 2);
-            using (var edge = new Pen(Pal.Darken(tone, 0.45f), 3f)) g.DrawRectangle(edge, 2, 2, W - 5, W - 5);
-            // floor grid
-            using (var grid = new Pen(Pal.Darken(tone, 0.25f), 1.2f))
-                for (int i = 1; i < 6; i++)
-                {
-                    g.DrawLine(grid, i * W / 6f, 6, i * W / 6f, W - 6);
-                    g.DrawLine(grid, 6, i * W / 6f, W - 6, i * W / 6f);
-                }
-            // gantry robot arm: base pillar, two segments, gripper
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            var tone = Pal.C(62, 94, 106);
+            using (var sh = new SolidBrush(Color.FromArgb(82, 0, 0, 0))) g.FillEllipse(sh, 8, W - 24, W - 16, 18);
+            using (var baseB = new LinearGradientBrush(new PointF(2, 2), new PointF(W - 2, W - 2), Pal.Lighten(tone, 0.16f), Pal.Darken(tone, 0.28f)))
+                g.FillRectangle(baseB, 2, 2, W - 4, W - 8);
+            using (var edge = new Pen(Pal.Darken(tone, 0.46f), 3f)) g.DrawRectangle(edge, 2, 2, W - 5, W - 9);
+            using (var grid = new Pen(WithA(Pal.C(36, 58, 66), 120), 1.2f))
+                for (int i = 1; i < 6; i++) { g.DrawLine(grid, i * W / 6f, 7, i * W / 6f, W - 10); g.DrawLine(grid, 7, i * W / 6f, W - 7, i * W / 6f); }
             float c = W / 2f;
-            using (var pillar = new SolidBrush(Pal.C(50, 58, 66))) g.FillRectangle(pillar, c - 9, W * 0.34f, 18, W * 0.3f);
-            using (var arm = new Pen(Pal.C(220, 180, 80), 6f))
+            BeveledRect(g, c - 10, W * 0.34f, 20, W * 0.30f, Pal.C(46, 56, 66), 4f);
+            using (var arm = new Pen(Pal.C(224, 174, 72), 6f))
             {
-                arm.StartCap = System.Drawing.Drawing2D.LineCap.Round;
-                arm.EndCap = System.Drawing.Drawing2D.LineCap.Round;
-                g.DrawLine(arm, c, W * 0.38f, c + 26, W * 0.26f);
-                g.DrawLine(arm, c + 26, W * 0.26f, c + 18, W * 0.52f);
+                arm.StartCap = LineCap.Round; arm.EndCap = LineCap.Round;
+                g.DrawLine(arm, c, W * 0.38f, c + 28, W * 0.26f);
+                g.DrawLine(arm, c + 28, W * 0.26f, c + 18, W * 0.52f);
             }
-            using (var grip = new SolidBrush(Pal.C(235, 235, 225)))
-                g.FillRectangle(grip, c + 12, W * 0.52f, 12, 6);
-            // work light strip
-            using (var strip = new SolidBrush(Pal.C(120, 235, 200))) g.FillRectangle(strip, 8, W - 14, W - 16, 5);
+            using (var joint = new SolidBrush(Pal.C(242, 204, 104))) { g.FillEllipse(joint, c - 5, W * 0.36f - 5, 10, 10); g.FillEllipse(joint, c + 23, W * 0.26f - 5, 10, 10); }
+            BeveledRect(g, c + 10, W * 0.52f, 16, 7, Pal.C(230, 232, 220), 2f);
+            using (var strip = new SolidBrush(Pal.C(120, 235, 200))) g.FillRectangle(strip, 8, W - 16, W - 16, 5);
         }
+        Noise(b, 873, 2);
         return b;
     }
 
@@ -2651,28 +2885,32 @@ public static class Sprites
         var b = new Bitmap(W, W);
         using (var g = Graphics.FromImage(b))
         {
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            // soil bed
-            using (var soil = new SolidBrush(Pal.C(78, 62, 48))) g.FillRectangle(soil, 4, 4, W - 8, W - 8);
-            // glass roof: two angled panes
-            using (var glass = new SolidBrush(Pal.CA(110, Pal.C(160, 220, 200))))
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var sh = new SolidBrush(Color.FromArgb(65, 0, 0, 0))) g.FillEllipse(sh, 7, W - 22, W - 14, 16);
+            using (var soil = new LinearGradientBrush(new PointF(4, 4), new PointF(W - 4, W - 4), Pal.C(82, 64, 48), Pal.C(44, 34, 28))) g.FillRectangle(soil, 4, 4, W - 8, W - 8);
+            using (var bed = new Pen(WithA(Pal.C(42, 30, 22), 100), 1.2f))
+                for (int i = 0; i < 5; i++) g.DrawLine(bed, 8, W * 0.58f + i * W * 0.07f, W - 8, W * 0.58f + i * W * 0.07f);
+            using (var glass = new SolidBrush(WithA(Pal.C(165, 230, 205), 112)))
             {
                 g.FillPolygon(glass, new[] { new PointF(4, W * 0.5f), new PointF(W / 2f, 8), new PointF(W / 2f, W * 0.5f) });
                 g.FillPolygon(glass, new[] { new PointF(W / 2f, 8), new PointF(W - 4, W * 0.5f), new PointF(W / 2f, W * 0.5f) });
             }
-            using (var frame = new Pen(Pal.C(90, 96, 92), 2.5f))
+            using (var glare = new Pen(WithA(Pal.C(230, 255, 240), 135), 2f))
+            {
+                g.DrawLine(glare, W * 0.20f, W * 0.40f, W * 0.43f, W * 0.17f);
+                g.DrawLine(glare, W * 0.56f, W * 0.18f, W * 0.80f, W * 0.42f);
+            }
+            using (var frame = new Pen(Pal.C(78, 86, 82), 2.5f))
             {
                 g.DrawLine(frame, 4, W * 0.5f, W / 2f, 8);
                 g.DrawLine(frame, W / 2f, 8, W - 4, W * 0.5f);
                 g.DrawLine(frame, 4, W * 0.5f, W - 4, W * 0.5f);
                 g.DrawLine(frame, W / 2f, 8, W / 2f, W * 0.5f);
             }
-            // rows of sprouts under the glass
-            using (var sprout = new SolidBrush(Pal.C(120, 200, 90)))
-                for (int r = 0; r < 3; r++)
-                    for (int i = 0; i < 6; i++)
-                        g.FillEllipse(sprout, 12 + i * (W - 24) / 5f - 3, W * 0.58f + r * W * 0.13f, 7, 9);
+            using (var sprout = new SolidBrush(Pal.C(126, 210, 92)))
+                for (int row = 0; row < 3; row++) for (int i = 0; i < 6; i++) g.FillEllipse(sprout, 12 + i * (W - 24) / 5f - 3, W * 0.59f + row * W * 0.12f, 7, 9);
         }
+        Noise(b, 874, 2);
         return b;
     }
 
@@ -2682,30 +2920,35 @@ public static class Sprites
         var b = new Bitmap(W, W);
         using (var g = Graphics.FromImage(b))
         {
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            // lattice tower
-            using (var steel = new Pen(Pal.C(120, 126, 136), 3f))
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var sh = new SolidBrush(Color.FromArgb(62, 0, 0, 0))) g.FillEllipse(sh, 9, W - 16, W - 18, 10);
+            using (var steel = new Pen(Pal.C(130, 136, 146), 3f))
             {
+                steel.StartCap = LineCap.Round; steel.EndCap = LineCap.Round;
                 g.DrawLine(steel, 10, W - 8, W / 2f - 4, 12);
                 g.DrawLine(steel, W - 10, W - 8, W / 2f + 4, 12);
                 g.DrawLine(steel, 10, W - 8, W - 10, W - 8);
-                // cross braces
                 g.DrawLine(steel, 18, W * 0.62f, W - 18, W * 0.62f);
                 g.DrawLine(steel, 22, W * 0.45f, W - 22, W * 0.45f);
                 g.DrawLine(steel, 18, W * 0.62f, W - 22, W * 0.45f);
                 g.DrawLine(steel, W - 18, W * 0.62f, 22, W * 0.45f);
             }
-            // insulator arms + coils
-            using (var coil = new Pen(Pal.C(90, 200, 235), 2.5f))
+            using (var hi = new Pen(WithA(Pal.C(220, 226, 232), 95), 1f)) g.DrawLine(hi, W / 2f - 3, 13, 11, W - 9);
+            using (var coil = new Pen(Pal.C(100, 214, 246), 2.4f))
             {
+                coil.StartCap = LineCap.Round; coil.EndCap = LineCap.Round;
                 g.DrawLine(coil, W / 2f - 30, 16, W / 2f + 30, 16);
                 g.DrawEllipse(coil, W / 2f - 32, 10, 10, 10);
                 g.DrawEllipse(coil, W / 2f + 22, 10, 10, 10);
             }
-            // hazard base
-            using (var hz = new Pen(Pal.C(214, 174, 60), 3f))
-                g.DrawLine(hz, 8, W - 4, W - 8, W - 4);
+            using (var glow = new SolidBrush(WithA(Pal.C(100, 214, 246), 42)))
+            {
+                g.FillEllipse(glow, W / 2f - 35, 7, 16, 16);
+                g.FillEllipse(glow, W / 2f + 19, 7, 16, 16);
+            }
+            using (var hz = new Pen(Pal.C(230, 178, 58), 3f)) g.DrawLine(hz, 8, W - 5, W - 8, W - 5);
         }
+        Noise(b, 875, 2);
         return b;
     }
 
@@ -2748,42 +2991,8 @@ public static class Sprites
 
     private static Bitmap BakeFastBelt(Dir d, int frame = 0)
     {
-        bool horiz = d is Dir.Right or Dir.Left;
-        var b = Make((g, bmp) =>
-        {
-            g.Clear(Pal.C(58, 74, 98));
-            using (var rail = new SolidBrush(Pal.C(34, 42, 58)))
-            {
-                if (horiz) { g.FillRectangle(rail, 0, 2, S, 3); g.FillRectangle(rail, 0, S - 5, S, 3); }
-                else { g.FillRectangle(rail, 2, 0, 3, S); g.FillRectangle(rail, S - 5, 0, 3, S); }
-            }
-            // dense rollers
-            // scrolling rollers: 5px period, 1px/frame, 5-frame loop
-            using (var roller = new Pen(Pal.C(96, 116, 148), 2f))
-                for (int i = -1; i < 7; i++)
-                {
-                    int p = 5 + i * 5 + frame;
-                    if (p < 5 || p > S - 6) continue;
-                    if (horiz) g.DrawLine(roller, p, 6, p, S - 6);
-                    else g.DrawLine(roller, 6, p, S - 6, p);
-                }
-            // double chevron
-            float cx = S / 2f, cy = S / 2f;
-            int sgn = d is Dir.Right or Dir.Down ? 1 : -1;
-            var dx = horiz ? sgn : 0; var dy = horiz ? 0 : sgn;
-            using var br = new SolidBrush(Pal.CA(220, Pal.C(120, 220, 255)));
-            foreach (float off in new[] { -3f, 3f })
-            {
-                var pts = new[]
-                {
-                    new PointF(cx + dx * (6 + off), cy + dy * (6 + off)),
-                    new PointF(cx - dx * 4 - (horiz ? 0 : 4) + dx * off, cy - dy * 4 - (horiz ? 4 : 0) + dy * off),
-                    new PointF(cx - dx * 4 + (horiz ? 0 : 4) + dx * off, cy - dy * 4 + (horiz ? 4 : 0) + dy * off),
-                };
-                g.FillPolygon(br, pts);
-            }
-        });
-        Noise(b, 700 + (int)d, 4);
+        var b = Make((g, bmp) => DrawBeltSurface(g, d, true, frame));
+        Noise(b, 1700 + (int)d * 11 + frame, 2);
         return b;
     }
 
@@ -2792,26 +3001,20 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            g.Clear(Pal.BeltCol);
-            using (var rail = new SolidBrush(Pal.C(32, 36, 42)))
+            DrawLogisticsBase(g);
+            BeveledRect(g, 8, 8, 20, 20, Pal.C(62, 72, 86), 4f);
+            using (var groove = new Pen(Pal.C(36, 44, 54), 2.2f))
             {
-                g.FillRectangle(rail, 0, 2, S, 3);
-                g.FillRectangle(rail, 0, S - 5, S, 3);
-                g.FillRectangle(rail, 2, 0, 3, S);
-                g.FillRectangle(rail, S - 5, 0, 3, S);
+                g.DrawLine(groove, S / 2f, 7, S / 2f, S - 7);
+                g.DrawLine(groove, 7, S / 2f, S - 7, S / 2f);
             }
-            using (var plate = new SolidBrush(Pal.C(60, 68, 80)))
-                g.FillRectangle(plate, 6, 6, S - 12, S - 12);
-            using (var plate2 = new SolidBrush(Pal.C(74, 84, 98)))
-                g.FillRectangle(plate2, 9, 9, S - 18, S - 18);
-            // faint crossing grooves
-            using (var groove = new Pen(Pal.C(48, 56, 66), 2f))
+            using (var hi = new Pen(WithA(Pal.C(150, 170, 190), 95), 1f))
             {
-                g.DrawLine(groove, S / 2f, 8, S / 2f, S - 8);
-                g.DrawLine(groove, 8, S / 2f, S - 8, S / 2f);
+                g.DrawLine(hi, 10, 10, 26, 10);
+                g.DrawLine(hi, 10, 10, 10, 26);
             }
         });
-        Noise(b, 821, 4);
+        Noise(b, 821, 2);
         return b;
     }
 
@@ -2820,26 +3023,15 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            g.Clear(Pal.BeltCol);
-            using (var rail = new SolidBrush(Pal.C(32, 36, 42)))
-            {
-                g.FillRectangle(rail, 0, 2, S, 3);
-                g.FillRectangle(rail, 0, S - 5, S, 3);
-                g.FillRectangle(rail, 2, 0, 3, S);
-                g.FillRectangle(rail, S - 5, 0, 3, S);
-            }
-            using (var hub = new SolidBrush(Pal.C(84, 94, 106)))
-                g.FillEllipse(hub, 8, 8, 20, 20);
-            using (var hubIn = new SolidBrush(Pal.C(56, 64, 74)))
-                g.FillEllipse(hubIn, 12, 12, 12, 12);
-            // bold straight-ahead chevron (priority)
-            using var br = new SolidBrush(Pal.CA(230, Pal.Warn));
-            g.FillPolygon(br, new[]
-            {
-                new PointF(24f, 18f), new PointF(16f, 13f), new PointF(16f, 23f),
-            });
+            DrawLogisticsBase(g);
+            using (var hub = new SolidBrush(Pal.C(92, 104, 118))) g.FillEllipse(hub, 7, 7, 22, 22);
+            using (var core = new LinearGradientBrush(new PointF(9, 9), new PointF(27, 27), Pal.C(128, 142, 154), Pal.C(54, 62, 72)))
+                g.FillEllipse(core, 10, 10, 16, 16);
+            using (var br = new SolidBrush(WithA(Pal.Warn, 230)))
+                g.FillPolygon(br, new[] { new PointF(26f, 18f), new PointF(15f, 11.5f), new PointF(15f, 24.5f) });
+            using (var rim = new Pen(Pal.C(36, 42, 50), 1.2f)) g.DrawEllipse(rim, 7, 7, 22, 22);
         });
-        Noise(b, 822, 4);
+        Noise(b, 822, 2);
         return b;
     }
 
@@ -2848,17 +3040,21 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            g.Clear(Pal.CA(0, Pal.C(0, 0, 0)));      // transparent base
-            using (var base_ = new SolidBrush(Pal.C(40, 42, 46)))
-                g.FillEllipse(base_, 10, 27, 16, 7); // concrete foot
-            using (var mast = new Pen(Pal.C(122, 94, 62), 3.4f))
-                g.DrawLine(mast, S / 2f, 30, S / 2f, 6);
-            using (var arm = new Pen(Pal.C(104, 80, 52), 2.6f))
-                g.DrawLine(arm, 8, 10, S - 8, 10);
-            using var ins = new SolidBrush(Pal.C(120, 200, 240));
-            g.FillEllipse(ins, 7, 7, 4, 4);
-            g.FillEllipse(ins, S - 11, 7, 4, 4);
-            g.FillEllipse(ins, S / 2f - 2, 4, 4, 4);
+            g.Clear(Color.Transparent);
+            DropShadow(g, 9, 25, 18, 8, 62);
+            using (var base_ = new SolidBrush(Pal.C(42, 44, 48))) g.FillEllipse(base_, 10, 27, 16, 7);
+            using var mast = new Pen(Pal.C(126, 92, 58), 3.1f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            g.DrawLine(mast, S / 2f, 30, S / 2f, 6);
+            using (var hi = new Pen(Pal.C(176, 130, 80), 1f)) g.DrawLine(hi, S / 2f - 1, 29, S / 2f - 1, 7);
+            using var arm = new Pen(Pal.C(104, 76, 48), 2.5f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            g.DrawLine(arm, 7, 10, S - 7, 10);
+            using var ins = new SolidBrush(Pal.C(130, 214, 245));
+            foreach (var (x,y) in new[] { (7f, 7f), (S - 11f, 7f), (S / 2f - 2f, 4f) })
+            {
+                g.FillEllipse(ins, x, y, 4, 4);
+                using var glow = new SolidBrush(WithA(Pal.C(130, 214, 245), 38));
+                g.FillEllipse(glow, x - 2, y - 2, 8, 8);
+            }
         });
         return b;
     }
@@ -2869,32 +3065,30 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            using (var deep = new System.Drawing.Drawing2D.LinearGradientBrush(
-                new Rectangle(0, 0, S, S), Pal.C(24, 54, 88), Pal.C(36, 76, 112), 90f))
+            using (var deep = new LinearGradientBrush(new RectangleF(0, 0, S, S), Pal.C(20, 48, 84), Pal.C(38, 92, 132), 90f))
                 g.FillRectangle(deep, 0, 0, S, S);
+            using (var shade = new SolidBrush(WithA(Pal.C(10, 24, 48), 42)))
+                g.FillEllipse(shade, -6, S - 10, S + 12, 14);
             var r = new Random(910 + f * 7);
-            // drifting wave crests (frame offset gives the motion)
-            using (var wave = new Pen(Pal.C(60, 114, 158), 1.4f))
+            int off = (f - 1) * 4;
+            using (var wave = new Pen(WithA(Pal.C(106, 178, 220), 135), 1.25f))
                 for (int i = 0; i < 5; i++)
                 {
-                    int x = r.Next(-4, S - 10), y = r.Next(3, S - 4);
-                    int len = r.Next(7, 13);
-                    int dx = (f - 1) * 3;
-                    g.DrawLine(wave, x + dx, y, x + len + dx, y - 1);
+                    int x = r.Next(-8, S - 8), y = r.Next(4, S - 4);
+                    int len = r.Next(8, 15);
+                    g.DrawBezier(wave, x + off, y, x + off + len * 0.35f, y - 2, x + off + len * 0.65f, y + 2, x + off + len, y);
                 }
-            using (var wave2 = new Pen(Pal.CA(120, Pal.C(120, 180, 220)), 1.1f))
+            using (var wave2 = new Pen(WithA(Pal.C(180, 225, 250), 90), 1f))
                 for (int i = 0; i < 3; i++)
                 {
-                    int x = r.Next(0, S - 8), y = r.Next(4, S - 3);
-                    int dx = (1 - f) * 4;
-                    g.DrawLine(wave2, x + dx, y, x + 6 + dx, y);
+                    int x = r.Next(-4, S - 8), y = r.Next(5, S - 4);
+                    g.DrawLine(wave2, x - off, y, x + 7 - off, y - 1);
                 }
-            // sparkles
-            using (var sp = new SolidBrush(Pal.CA(170, Pal.C(180, 225, 250))))
-                for (int i = 0; i < 3; i++)
+            using (var sp = new SolidBrush(WithA(Pal.C(210, 245, 255), 150)))
+                for (int i = 0; i < 2; i++)
                     g.FillEllipse(sp, r.Next(3, S - 5), r.Next(3, S - 5), 2, 1);
         });
-        Noise(b, 920 + f, 3);
+        Noise(b, 920 + f, 2);
         return b;
     }
 
@@ -2903,27 +3097,46 @@ public static class Sprites
         bool horiz = d is Dir.Right or Dir.Left;
         var b = Make((g, bmp) =>
         {
-            g.Clear(Pal.CA(0, Pal.C(0, 0, 0)));   // transparent
-            Color wood = elevated ? Pal.C(96, 88, 80) : Pal.C(84, 70, 56);
-            Color steel = elevated ? Pal.C(150, 142, 132) : Pal.C(128, 122, 116);
-            // sleepers
+            g.Clear(Color.Transparent);
+            Color wood = elevated ? Pal.C(92, 86, 80) : Pal.C(86, 68, 50);
+            Color steel = elevated ? Pal.C(172, 166, 156) : Pal.C(140, 136, 130);
+            Color dark = elevated ? Pal.C(64, 62, 62) : Pal.C(48, 42, 38);
+            using (var sh = new SolidBrush(Color.FromArgb(58, 0, 0, 0)))
+            {
+                if (horiz) g.FillRectangle(sh, 0, 25, S, 5); else g.FillRectangle(sh, 25, 0, 5, S);
+            }
             using (var sl = new SolidBrush(wood))
+                for (int i = -1; i < 5; i++)
+                {
+                    if (horiz) g.FillRectangle(sl, 2 + i * 9, 8, 4, 20);
+                    else g.FillRectangle(sl, 8, 2 + i * 9, 20, 4);
+                }
+            using (var grain = new Pen(Pal.Darken(wood, 0.25f), 1f))
                 for (int i = 0; i < 4; i++)
                 {
-                    if (horiz) g.FillRectangle(sl, 3 + i * 9, 8, 4, 20);
-                    else g.FillRectangle(sl, 8, 3 + i * 9, 20, 4);
+                    if (horiz) g.DrawLine(grain, 3 + i * 9, 11, 5 + i * 9, 24);
+                    else g.DrawLine(grain, 11, 3 + i * 9, 24, 5 + i * 9);
                 }
-            // rails
-            using (var pen = new Pen(steel, 2.2f))
+            using (var pen = new Pen(dark, 4.2f))
             {
                 if (horiz) { g.DrawLine(pen, 0, 12, S, 12); g.DrawLine(pen, 0, 24, S, 24); }
                 else { g.DrawLine(pen, 12, 0, 12, S); g.DrawLine(pen, 24, 0, 24, S); }
             }
-            if (elevated) // support pylon
-            using (var py = new SolidBrush(Pal.C(70, 64, 60)))
+            using (var pen = new Pen(steel, 2.2f))
             {
-                g.FillRectangle(py, S / 2 - 3, S / 2 - 3, 6, 6);
-                g.FillRectangle(py, S / 2 - 5, S / 2 - 1, 10, 2);
+                if (horiz) { g.DrawLine(pen, 0, 11, S, 11); g.DrawLine(pen, 0, 23, S, 23); }
+                else { g.DrawLine(pen, 11, 0, 11, S); g.DrawLine(pen, 23, 0, 23, S); }
+            }
+            using (var hi = new Pen(WithA(Pal.Lighten(steel, 0.4f), 130), 1f))
+            {
+                if (horiz) { g.DrawLine(hi, 0, 10, S, 10); g.DrawLine(hi, 0, 22, S, 22); }
+                else { g.DrawLine(hi, 10, 0, 10, S); g.DrawLine(hi, 22, 0, 22, S); }
+            }
+            if (elevated)
+            {
+                BeveledRect(g, S / 2f - 4, S / 2f - 4, 8, 8, Pal.C(86, 82, 78), 2f);
+                using var brace = new Pen(Pal.C(96, 92, 88), 1.6f);
+                g.DrawLine(brace, 8, S - 8, S - 8, 8);
             }
         });
         return b;
@@ -2933,23 +3146,16 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            g.Clear(Pal.BeltCol);
-            using (var rail = new SolidBrush(Pal.C(32, 36, 42)))
-            {
-                g.FillRectangle(rail, 0, 2, S, 3);
-                g.FillRectangle(rail, 0, S - 5, S, 3);
-                g.FillRectangle(rail, 2, 0, 3, S);
-                g.FillRectangle(rail, S - 5, 0, 3, S);
-            }
-            using (var hub = new SolidBrush(Pal.C(96, 106, 118)))
-                g.FillEllipse(hub, 7, 7, 22, 22);
-            using (var hubIn = new SolidBrush(Pal.C(64, 72, 82)))
-                g.FillEllipse(hubIn, 12, 12, 12, 12);
-            // three intake chevrons pointing in
-            using var br = new SolidBrush(Pal.CA(200, Pal.Accent));
-            g.FillPolygon(br, new[] { new PointF(14f, 18f), new PointF(20f, 14f), new PointF(20f, 22f) });
+            DrawLogisticsBase(g);
+            using (var hub = new SolidBrush(Pal.C(98, 112, 124))) g.FillEllipse(hub, 6.5f, 6.5f, 23, 23);
+            using (var core = new LinearGradientBrush(new PointF(9, 9), new PointF(27, 27), Pal.C(122, 138, 150), Pal.C(50, 62, 72)))
+                g.FillEllipse(core, 11, 11, 14, 14);
+            using var br = new SolidBrush(WithA(Pal.Accent, 210));
+            g.FillPolygon(br, new[] { new PointF(10f, 18f), new PointF(17f, 13f), new PointF(17f, 23f) });
+            g.FillPolygon(br, new[] { new PointF(18f, 10f), new PointF(23f, 17f), new PointF(13f, 17f) });
+            g.FillPolygon(br, new[] { new PointF(18f, 26f), new PointF(23f, 19f), new PointF(13f, 19f) });
         });
-        Noise(b, 823, 4);
+        Noise(b, 823, 2);
         return b;
     }
 
@@ -2957,25 +3163,20 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            g.Clear(Pal.BeltCol);
-            using (var rail = new SolidBrush(Pal.C(32, 36, 42)))
+            DrawLogisticsBase(g);
+            BeveledRect(g, 7, 7, 22, 22, Pal.C(76, 104, 90), 5f);
+            using (var glass = new SolidBrush(WithA(Pal.C(116, 230, 170), 80)))
+                g.FillEllipse(glass, 11, 11, 14, 14);
+            using (var fn = new Pen(Pal.Warn, 2f))
             {
-                g.FillRectangle(rail, 0, 2, S, 3);
-                g.FillRectangle(rail, 0, S - 5, S, 3);
-                g.FillRectangle(rail, 2, 0, 3, S);
-                g.FillRectangle(rail, S - 5, 0, 3, S);
+                fn.StartCap = LineCap.Round; fn.EndCap = LineCap.Round;
+                g.DrawLine(fn, 11.5f, 12.5f, 18, 18);
+                g.DrawLine(fn, 24.5f, 12.5f, 18, 18);
+                g.DrawLine(fn, 18, 18, 18, 24.5f);
             }
-            using (var hub = new SolidBrush(Pal.C(88, 100, 92)))
-                g.FillEllipse(hub, 7, 7, 22, 22);
-            using (var hubIn = new SolidBrush(Pal.C(58, 68, 62)))
-                g.FillEllipse(hubIn, 11, 11, 14, 14);
-            // funnel glyph
-            using var fn = new Pen(Pal.Warn, 2f);
-            g.DrawLine(fn, 12, 13, 18, 18);
-            g.DrawLine(fn, 24, 13, 18, 18);
-            g.DrawLine(fn, 18, 18, 18, 24);
+            using (var dot = new SolidBrush(Pal.C(230, 255, 215))) g.FillEllipse(dot, 16, 10, 4, 4);
         });
-        Noise(b, 824, 4);
+        Noise(b, 824, 2);
         return b;
     }
 
@@ -2983,37 +3184,45 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            g.Clear(Pal.CA(0, Pal.C(0, 0, 0)));
-            using (var base_ = new SolidBrush(Pal.C(60, 66, 74)))
-                g.FillEllipse(base_, 10, 22, 16, 10);
-            using (var arm = new Pen(Pal.C(180, 150, 96), 3f))
+            g.Clear(Color.Transparent);
+            DropShadow(g, 7, 20, 22, 11, 62);
+            BeveledRect(g, 10, 22, 16, 9, Pal.C(62, 70, 80), 4f);
+            using (var arm = new Pen(Pal.C(198, 158, 86), 3.1f))
             {
-                g.DrawLine(arm, 18, 26, 10, 12);
-                g.DrawLine(arm, 10, 12, 4, 15);
+                arm.StartCap = LineCap.Round; arm.EndCap = LineCap.Round;
+                g.DrawLine(arm, 18, 25, 11, 12);
+                g.DrawLine(arm, 11, 12, 5, 15);
             }
-            using (var claw = new SolidBrush(Pal.C(230, 200, 130)))
-                g.FillEllipse(claw, 2, 13, 5, 5);
+            using (var joint = new SolidBrush(Pal.C(235, 196, 112)))
+            {
+                g.FillEllipse(joint, 15, 22, 6, 6);
+                g.FillEllipse(joint, 8.5f, 9.5f, 5, 5);
+            }
+            using (var claw = new Pen(Pal.C(238, 210, 142), 1.7f))
+            {
+                claw.StartCap = LineCap.Round; claw.EndCap = LineCap.Round;
+                g.DrawLine(claw, 5, 15, 1.8f, 12.5f);
+                g.DrawLine(claw, 5, 15, 2.2f, 18.2f);
+            }
         });
         return b;
     }
 
     private static Bitmap BakeTrainStop()
     {
-        var tone = Pal.C(90, 110, 140);
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, tone);
-            // platform stripes
-            using (var p = new Pen(Pal.C(58, 74, 96), 2f))
-                for (int i = 0; i < 3; i++)
-                    g.DrawLine(p, 5 + i * 10, 5, 5 + i * 10, S - 5);
-            // signal mast
-            using (var mast = new Pen(Pal.C(150, 160, 175), 2f))
-                g.DrawLine(mast, S - 8, S - 6, S - 8, 6);
-            using (var lamp = new SolidBrush(Pal.Good))
-                g.FillEllipse(lamp, S - 11, 3, 6, 6);
+            PanelBase(g, Pal.C(82, 104, 136));
+            using (var platform = new LinearGradientBrush(new PointF(5, 7), new PointF(29, 28), Pal.C(118, 140, 166), Pal.C(54, 70, 92)))
+                FillRound(g, platform, 5, 7, 24, 20, 2f);
+            using (var stripe = new Pen(WithA(Pal.C(210, 220, 230), 95), 1.4f))
+                for (int i = 0; i < 3; i++) g.DrawLine(stripe, 8 + i * 7, 8, 8 + i * 7, 26);
+            using var mast = new Pen(Pal.C(170, 176, 186), 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            g.DrawLine(mast, S - 8, S - 7, S - 8, 7);
+            using (var lamp = new SolidBrush(Pal.Good)) g.FillEllipse(lamp, S - 11, 4, 6, 6);
+            using (var glow = new SolidBrush(WithA(Pal.Good, 42))) g.FillEllipse(glow, S - 14, 1, 12, 12);
         });
-        Noise(b, 830, 5);
+        Noise(b, 830, 2);
         return b;
     }
 
@@ -3023,20 +3232,19 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(150, 145, 100));
-            // landing pad circle
-            using (var ring = new Pen(Pal.C(220, 214, 150), 2f))
-                g.DrawEllipse(ring, 8, 8, 20, 20);
-            using (var cross = new Pen(Pal.C(200, 194, 140), 1.6f))
+            PanelBase(g, Pal.C(142, 136, 92));
+            using (var padGlow = new SolidBrush(WithA(Pal.C(220, 214, 150), 46))) g.FillEllipse(padGlow, 6, 6, 24, 24);
+            using (var ring = new Pen(Pal.C(224, 218, 154), 2f)) g.DrawEllipse(ring, 8, 8, 20, 20);
+            using (var ring2 = new Pen(Pal.C(74, 78, 66), 1f)) g.DrawEllipse(ring2, 12, 12, 12, 12);
+            using (var cross = new Pen(Pal.C(206, 198, 136), 1.5f))
             {
                 g.DrawLine(cross, 18, 10, 18, 26);
                 g.DrawLine(cross, 10, 18, 26, 18);
             }
-            // comm mast
-            using (var mast = new Pen(Pal.C(120, 118, 88), 2f))
-                g.DrawLine(mast, 30, 30, 33, 22);
+            using (var mast = new Pen(Pal.C(116, 112, 84), 2f)) g.DrawLine(mast, 29, 30, 33, 21);
+            using (var ping = new Pen(WithA(Pal.Accent, 125), 1f)) g.DrawArc(ping, 27, 16, 8, 8, 250, 80);
         });
-        Noise(b, 831, 4);
+        Noise(b, 831, 2);
         return b;
     }
 
@@ -3044,24 +3252,27 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            g.Clear(Pal.CA(0, Pal.C(0, 0, 0)));
-            // flanged pipe segment, vertical+horizontal stubs; renderer adds links
-            using (var pipe = new SolidBrush(Pal.C(104, 122, 128)))
+            g.Clear(Color.Transparent);
+            using (var sh = new SolidBrush(Color.FromArgb(48, 0, 0, 0)))
             {
-                g.FillRectangle(pipe, 8, 4, 8, S - 8);
-                g.FillRectangle(pipe, 4, 14, S - 8, 8);
+                g.FillRectangle(sh, 9, 5, 10, S - 8);
+                g.FillRectangle(sh, 5, 15, S - 8, 10);
             }
-            using (var hl = new SolidBrush(Pal.C(150, 170, 176)))
+            using (var pipe = new LinearGradientBrush(new PointF(8, 4), new PointF(18, S - 4), Pal.C(150, 174, 180), Pal.C(74, 92, 100)))
+                g.FillRectangle(pipe, 8, 4, 9, S - 8);
+            using (var pipe = new LinearGradientBrush(new PointF(4, 14), new PointF(S - 4, 24), Pal.C(150, 174, 180), Pal.C(74, 92, 100)))
+                g.FillRectangle(pipe, 4, 14, S - 8, 9);
+            using (var flange = new SolidBrush(Pal.C(68, 84, 92)))
             {
-                g.FillRectangle(hl, 10, 4, 2, S - 8);
-                g.FillRectangle(hl, 4, 16, S - 8, 2);
+                g.FillRectangle(flange, 7, 6, 11, 3);
+                g.FillRectangle(flange, 7, S - 9, 11, 3);
+                g.FillRectangle(flange, 6, 13, 3, 11);
+                g.FillRectangle(flange, S - 9, 13, 3, 11);
             }
-            using (var flange = new SolidBrush(Pal.C(80, 96, 102)))
+            using (var hi = new Pen(WithA(Pal.C(220, 235, 238), 90), 1f))
             {
-                g.FillRectangle(flange, 7, 6, 10, 3);
-                g.FillRectangle(flange, 7, S - 9, 10, 3);
-                g.FillRectangle(flange, 6, 13, 3, 10);
-                g.FillRectangle(flange, S - 9, 13, 3, 10);
+                g.DrawLine(hi, 10, 5, 10, S - 5);
+                g.DrawLine(hi, 5, 16, S - 5, 16);
             }
         });
         return b;
@@ -3071,21 +3282,21 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(70, 130, 150));
-            // impeller housing
-            using (var housing = new SolidBrush(Pal.C(52, 104, 124)))
+            PanelBase(g, Pal.C(62, 124, 148));
+            using (var housing = new LinearGradientBrush(new PointF(8, 8), new PointF(28, 28), Pal.C(96, 174, 196), Pal.C(34, 82, 104)))
                 g.FillEllipse(housing, 8, 8, 20, 20);
-            using (var blade = new Pen(Pal.C(150, 214, 230), 2.2f))
+            using (var rim = new Pen(Pal.C(26, 62, 78), 1.5f)) g.DrawEllipse(rim, 8, 8, 20, 20);
+            using (var blade = new Pen(Pal.C(176, 232, 240), 2.1f))
             {
+                blade.StartCap = LineCap.Round; blade.EndCap = LineCap.Round;
                 g.DrawLine(blade, 18, 11, 18, 25);
                 g.DrawLine(blade, 11, 18, 25, 18);
                 g.DrawLine(blade, 13, 13, 23, 23);
                 g.DrawLine(blade, 23, 13, 13, 23);
             }
-            using (var hubc = new SolidBrush(Pal.C(220, 240, 250)))
-                g.FillEllipse(hubc, 16, 16, 4, 4);
+            using (var hubc = new SolidBrush(Pal.C(230, 248, 252))) g.FillEllipse(hubc, 16, 16, 4, 4);
         });
-        Noise(b, 832, 4);
+        Noise(b, 832, 2);
         return b;
     }
 
@@ -3093,15 +3304,19 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            g.Clear(Pal.CA(0, Pal.C(0, 0, 0)));
-            using (var cyl = new SolidBrush(Pal.C(110, 130, 135)))
-                g.FillEllipse(cyl, 4, 8, 28, 24);
-            using (var top = new SolidBrush(Pal.C(140, 162, 168)))
-                g.FillEllipse(top, 4, 6, 28, 10);
-            using (var band = new Pen(Pal.C(78, 94, 100), 2f))
-                g.DrawEllipse(band, 4, 8, 28, 24);
-            using (var gauge = new SolidBrush(Pal.Accent))
-                g.FillRectangle(gauge, 16, 2, 4, 6);
+            g.Clear(Color.Transparent);
+            DropShadow(g, 5, 15, 26, 15, 62);
+            using (var body = new LinearGradientBrush(new PointF(4, 8), new PointF(32, 30), Pal.C(156, 178, 184), Pal.C(78, 100, 108)))
+                g.FillEllipse(body, 4, 8, 28, 23);
+            using (var top = new LinearGradientBrush(new PointF(4, 5), new PointF(32, 16), Pal.C(188, 206, 210), Pal.C(100, 126, 134)))
+                g.FillEllipse(top, 4, 5, 28, 11);
+            using (var band = new Pen(Pal.C(66, 82, 90), 1.8f))
+            {
+                g.DrawEllipse(band, 4, 8, 28, 23);
+                g.DrawLine(band, 6, 20, 30, 20);
+            }
+            using (var gauge = new SolidBrush(Pal.Accent)) g.FillRectangle(gauge, 16, 2, 4, 6);
+            using (var shine = new Pen(WithA(Pal.C(230, 245, 248), 120), 1f)) g.DrawArc(shine, 7, 7, 21, 17, 205, 65);
         });
         return b;
     }
@@ -3110,21 +3325,23 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(150, 100, 70));
-            // firebox
-            using (var box = new SolidBrush(Pal.C(60, 42, 34)))
-                g.FillRectangle(box, 8, 12, 20, 16);
-            using (var fire = new SolidBrush(Pal.C(240, 150, 60)))
-                g.FillEllipse(fire, 12, 18, 6, 7);
-            using (var fire2 = new SolidBrush(Pal.C(250, 210, 90)))
-                g.FillEllipse(fire2, 20, 17, 5, 6);
-            // chimney
-            using (var chim = new SolidBrush(Pal.C(96, 66, 50)))
-                g.FillRectangle(chim, 24, 4, 6, 9);
-            using (var steam = new Pen(Pal.CA(160, Pal.Text), 1.4f))
-                g.DrawLine(steam, 27, 2, 31, 5);
+            PanelBase(g, Pal.C(142, 94, 66));
+            BeveledRect(g, 7, 12, 22, 16, Pal.C(72, 48, 38), 3f);
+            using (var fire = new LinearGradientBrush(new PointF(11, 17), new PointF(25, 25), Pal.C(255, 226, 102), Pal.C(220, 78, 34)))
+            {
+                g.FillEllipse(fire, 11, 17, 7, 8);
+                g.FillEllipse(fire, 19, 16, 6, 9);
+            }
+            BeveledRect(g, 23, 4, 7, 10, Pal.C(94, 64, 48), 2f);
+            using (var steam = new Pen(WithA(Pal.Text, 145), 1.2f))
+            {
+                steam.StartCap = LineCap.Round; steam.EndCap = LineCap.Round;
+                g.DrawBezier(steam, 27, 4, 31, 1, 32, 5, 34, 2);
+                g.DrawBezier(steam, 24, 4, 20, 1, 21, 5, 18, 3);
+            }
+            using (var gauge = new SolidBrush(Pal.C(120, 214, 240))) g.FillEllipse(gauge, 8, 7, 5, 5);
         });
-        Noise(b, 833, 5);
+        Noise(b, 833, 2);
         return b;
     }
 
@@ -3132,45 +3349,42 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(130, 125, 110));
-            // piston block
-            using (var block = new SolidBrush(Pal.C(92, 88, 78)))
-                g.FillRectangle(block, 6, 14, 14, 12);
-            using (var rod = new Pen(Pal.C(190, 190, 200), 2.4f))
+            PanelBase(g, Pal.C(122, 118, 104));
+            BeveledRect(g, 6, 14, 14, 12, Pal.C(84, 82, 74), 2f);
+            using (var rod = new Pen(Pal.C(202, 204, 210), 2.3f))
             {
-                g.DrawLine(rod, 20, 20, 30, 20);
+                rod.StartCap = LineCap.Round; rod.EndCap = LineCap.Round;
+                g.DrawLine(rod, 19, 20, 30, 20);
                 g.DrawLine(rod, 24, 20, 24, 12);
             }
-            using (var wheel = new Pen(Pal.C(210, 200, 180), 2f))
-                g.DrawEllipse(wheel, 24, 10, 9, 9);
-            using (var fly = new SolidBrush(Pal.C(240, 190, 80)))
-                g.FillEllipse(fly, 27, 13, 3, 3);
+            using (var wheel = new Pen(Pal.C(216, 206, 184), 2.2f)) g.DrawEllipse(wheel, 23, 9, 10, 10);
+            using (var fly = new SolidBrush(Pal.C(242, 190, 72))) g.FillEllipse(fly, 26.5f, 12.5f, 3.5f, 3.5f);
+            using (var steam = new Pen(WithA(Pal.Text, 105), 1f)) g.DrawBezier(steam, 10, 13, 7, 8, 12, 8, 9, 4);
         });
-        Noise(b, 834, 5);
+        Noise(b, 834, 2);
         return b;
     }
 
     private static Bitmap BakeFabTier(int tier)
     {
-        var tone = tier == 3 ? Pal.C(126, 120, 175) : Pal.C(110, 108, 150);
+        var tone = tier == 3 ? Pal.C(118, 112, 170) : Pal.C(100, 104, 148);
         var b = Make((g, bmp) =>
         {
             PanelBase(g, tone);
-            // gantry like the fabricator...
-            using (var p = new Pen(Pal.C(50, 50, 74), 2.4f))
+            using (var rails = new Pen(Pal.C(42, 46, 70), 2.3f))
             {
-                g.DrawLine(p, 6, 8, 18, 22);
-                g.DrawLine(p, 30, 8, 18, 22);
+                rails.StartCap = LineCap.Round; rails.EndCap = LineCap.Round;
+                g.DrawLine(rails, 7, 9, 18, 22);
+                g.DrawLine(rails, 29, 9, 18, 22);
+                g.DrawLine(rails, 8, 9, 28, 9);
             }
-            // ...with tier pips
-            using (var pip = new SolidBrush(Pal.C(240, 220, 120)))
-                for (int i = 0; i < tier; i++)
-                    g.FillEllipse(pip, 8 + i * 8, 27, 4, 4);
-            // laser slot
-            using (var slot = new SolidBrush(Pal.C(120, 220, 255)))
-                g.FillRectangle(slot, 15, 5, 6, 3);
+            BeveledRect(g, 14, 13, 8, 8, tier == 3 ? Pal.C(144, 112, 220) : Pal.C(92, 168, 220), 2f);
+            using (var slot = new SolidBrush(Pal.C(140, 230, 255))) g.FillRectangle(slot, 15, 5, 6, 3);
+            using (var beam = new SolidBrush(WithA(Pal.C(140, 230, 255), 78))) g.FillRectangle(beam, 16, 8, 4, 13);
+            using (var pip = new SolidBrush(Pal.C(246, 220, 104)))
+                for (int i = 0; i < tier; i++) g.FillEllipse(pip, 8 + i * 8, 27, 4, 4);
         });
-        Noise(b, 840 + tier, 6);
+        Noise(b, 840 + tier, 2);
         return b;
     }
 
@@ -3178,16 +3392,14 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            g.Clear(Pal.C(52, 50, 48));
-            using (var spike = new SolidBrush(Pal.C(178, 178, 186)))
-                foreach (var (x, y) in new[] { (8, 8), (18, 8), (28, 8), (8, 20), (18, 20), (28, 20) })
-                {
-                    g.FillPolygon(spike, new[] { new PointF(x - 4, y + 4), new PointF(x, y - 6), new PointF(x + 4, y + 4) });
-                }
-            using (var dark = new Pen(Pal.C(36, 34, 32), 1f))
-                g.DrawRectangle(dark, 1.5f, 1.5f, S - 3, S - 3);
+            g.Clear(Color.Transparent);
+            BeveledRect(g, 2, 4, S - 4, S - 8, Pal.C(50, 48, 46), 3f);
+            using (var spike = new LinearGradientBrush(new PointF(8, 4), new PointF(28, 27), Pal.C(236, 236, 240), Pal.C(110, 112, 122)))
+                foreach (var (x, y) in new[] { (8, 10), (18, 9), (28, 10), (8, 22), (18, 21), (28, 22) })
+                    g.FillPolygon(spike, new[] { new PointF(x - 4, y + 4), new PointF(x, y - 7), new PointF(x + 4, y + 4) });
+            using (var blood = new SolidBrush(WithA(Pal.Bad, 90))) g.FillEllipse(blood, 20, 24, 5, 2);
         });
-        Noise(b, 835, 3);
+        Noise(b, 835, 2);
         return b;
     }
 
@@ -3195,13 +3407,15 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            g.Clear(Pal.CA(0, Pal.C(0, 0, 0)));
-            using (var casing = new SolidBrush(Pal.C(96, 70, 62)))
+            g.Clear(Color.Transparent);
+            DropShadow(g, 7, 17, 22, 10, 70);
+            using (var casing = new LinearGradientBrush(new PointF(8, 12), new PointF(28, 27), Pal.C(130, 88, 72), Pal.C(64, 46, 42)))
                 g.FillEllipse(casing, 8, 12, 20, 14);
-            using (var stripe = new Pen(Pal.C(200, 90, 70), 2f))
-                g.DrawLine(stripe, 12, 19, 24, 19);
-            using (var blink = new SolidBrush(Pal.Bad))
-                g.FillEllipse(blink, 17, 6, 4, 4);
+            using (var rim = new Pen(Pal.C(44, 34, 32), 1.2f)) g.DrawEllipse(rim, 8, 12, 20, 14);
+            using (var stripe = new Pen(Pal.C(220, 92, 70), 2f)) g.DrawLine(stripe, 12, 19, 24, 19);
+            using (var wire = new Pen(Pal.C(74, 74, 80), 1.2f)) g.DrawBezier(wire, 18, 12, 16, 8, 21, 7, 18, 4);
+            using (var blink = new SolidBrush(Pal.Bad)) g.FillEllipse(blink, 16, 5, 4, 4);
+            using (var glow = new SolidBrush(WithA(Pal.Bad, 58))) g.FillEllipse(glow, 13, 2, 10, 10);
         });
         return b;
     }
@@ -3210,15 +3424,15 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(90, 140, 190));
-            // emitter coil
-            using (var coil = new Pen(Pal.C(150, 220, 255), 2f))
-                for (int i = 0; i < 3; i++)
-                    g.DrawEllipse(coil, 10 + i * 3, 10 + i * 3, 16 - i * 6, 16 - i * 6);
-            using (var core = new SolidBrush(Pal.C(200, 240, 255)))
-                g.FillEllipse(core, 16, 16, 4, 4);
+            PanelBase(g, Pal.C(78, 130, 184));
+            using (var aura = new SolidBrush(WithA(Pal.C(150, 225, 255), 42))) g.FillEllipse(aura, 5, 5, 26, 26);
+            using (var coil = new Pen(Pal.C(160, 228, 255), 2f))
+                for (int i = 0; i < 3; i++) g.DrawEllipse(coil, 9 + i * 3, 9 + i * 3, 18 - i * 6, 18 - i * 6);
+            using (var core = new LinearGradientBrush(new PointF(15, 15), new PointF(22, 22), Pal.C(240, 255, 255), Pal.C(92, 190, 240)))
+                g.FillEllipse(core, 15, 15, 6, 6);
+            using (var arc = new Pen(WithA(Pal.C(200, 245, 255), 150), 1.2f)) g.DrawArc(arc, 6, 6, 24, 24, 210, 90);
         });
-        Noise(b, 836, 4);
+        Noise(b, 836, 2);
         return b;
     }
 
@@ -3226,17 +3440,16 @@ public static class Sprites
     {
         var b = Make((g, bmp) =>
         {
-            PanelBase(g, Pal.C(110, 130, 120));
-            // bay door
-            using (var door = new SolidBrush(Pal.C(62, 78, 72)))
-                g.FillRectangle(door, 8, 10, 20, 18);
-            using (var warn = new Pen(Pal.C(214, 174, 60), 1.6f))
-                for (int i = 0; i < 3; i++)
-                    g.DrawLine(warn, 10 + i * 7, 28, 14 + i * 7, 22);
-            using (var eye = new SolidBrush(Pal.BotCol))
-                g.FillEllipse(eye, 16, 14, 4, 4);
+            PanelBase(g, Pal.C(98, 124, 112));
+            BeveledRect(g, 7, 10, 22, 18, Pal.C(54, 74, 70), 3f);
+            using (var slat = new Pen(Pal.C(34, 48, 46), 1.4f))
+                for (int i = 0; i < 4; i++) g.DrawLine(slat, 9, 13 + i * 3.5f, 27, 13 + i * 3.5f);
+            using (var warn = new Pen(Pal.C(224, 176, 58), 1.6f))
+                for (int i = 0; i < 3; i++) g.DrawLine(warn, 10 + i * 7, 28, 14 + i * 7, 22);
+            using (var eyeGlow = new SolidBrush(WithA(Pal.BotCol, 58))) g.FillEllipse(eyeGlow, 13, 11, 10, 10);
+            using (var eye = new SolidBrush(Pal.BotCol)) g.FillEllipse(eye, 16, 14, 4, 4);
         });
-        Noise(b, 837, 5);
+        Noise(b, 837, 2);
         return b;
     }
 
