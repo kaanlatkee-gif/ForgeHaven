@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Headless logic test harness. Compiles ONLY the simulation sources
+       (no WinForms / GDI+) so the core sim can be exercised anywhere.
+       Do not build this in Release config together with the game exe;
+       it is just a dev-time sanity console app. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ForgeHaven.Tests</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <!-- PORTABILITY CANARY: this harness intentionally has NO System.Drawing.Common
+       package. The sim sources it compiles may only use the cross-platform
+       System.Drawing.Primitives types (Color, Point, PointF, Size, Rectangle).
+       If you ever feel the need to add the package back here, you have broken
+       the sim layer's portability (mobile port depends on it). GDI+ types
+       (Graphics/Bitmap/Pen/Brush/Font/Image) belong in the game head only:
+       Renderer.cs, Sprites.cs, MainForm.cs, Pal.Gdi.cs, UiTypes.cs. -->
+
+  <ItemGroup>
+    <Compile Include="TestMain.cs" />
+    <Compile Include="../ForgeHaven/Loc.cs" />
+    <Compile Include="../ForgeHaven/Types.cs" />
+    <Compile Include="../ForgeHaven/World.cs" />
+    <Compile Include="../ForgeHaven/Buildings.cs" />
+    <Compile Include="../ForgeHaven/Colonist.cs" />
+    <Compile Include="../ForgeHaven/Enemies.cs" />
+    <Compile Include="../ForgeHaven/Units.cs" />
+    <Compile Include="../ForgeHaven/Game.cs" />
+    <Compile Include="../ForgeHaven/Persistence.cs" />
+  </ItemGroup>
+
+</Project>
