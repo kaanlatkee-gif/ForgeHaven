@@ -98,6 +98,10 @@ public sealed class Game
     public bool InstantBuild;                       // tests / god mode: place = built
     public readonly List<Blueprint> Blueprints = new();
     public readonly List<MineOrder> MineOrders = new();
+    public readonly List<ItemPile> ItemPiles = new();          // dropped cargo
+    public readonly HashSet<long> PileZones = new();           // STOCKPILE: designated tiles
+    public readonly Dictionary<long, ItemPile> PileCells = new();   // per-tile zone contents
+    private float _haulScanT;
     private readonly Dictionary<long, Blueprint> _bpAt = new();
     private readonly Dictionary<long, MineOrder> _mineAt = new();
 
@@ -358,10 +362,11 @@ public sealed class Game
         }
         else if (tile.T == Terrain.Water) { reason = "Can't build on water (use a Pump or Elevated Rail)"; return false; }
 
-        if (kind is BuildKind.Drill or BuildKind.DeepDrill)
+        if (kind is BuildKind.Drill or BuildKind.DeepDrill or BuildKind.BlastDrill)
         {
-            if (tile.T is not (Terrain.IronOre or Terrain.CopperOre or Terrain.Crystal or Terrain.Flora or Terrain.Tree))
-            { reason = "Drills must sit on iron, copper, crystal, flora or forest"; return false; }
+            // COLLECTIBLES: trees are hand-felled cargo, not drill-able ore
+            if (tile.T is not (Terrain.IronOre or Terrain.CopperOre or Terrain.Crystal or Terrain.Flora))
+            { reason = "Drills must sit on iron, copper, crystal or flora"; return false; }
         }
         else if (tile.T == Terrain.Rock) { reason = "Solid rock"; return false; }
 
@@ -573,7 +578,7 @@ public sealed class Game
         foreach (var c in Cols)
         {
             if (c.Hp <= 0 || c.Drafted || c.Arriving || c.Job != null
-                || c.BuildJob != null || c.MineJob != null) continue;
+                || c.BuildJob != null || c.MineJob != null || c.HaulTarget != null) continue;
             int p = c.Priorities[(int)wt];
             if (p >= 4) continue;                       // 4 = never
             int sk = c.Stats[si];                       // suits their abilities
@@ -813,14 +818,14 @@ public sealed class Game
         var parent = new Dictionary<Building, Building>();
         Building Find(Building b) { while (parent[b] != b) { parent[b] = parent[parent[b]]; b = parent[b]; } return b; }
         foreach (var n in nodes) parent[n] = n;
-        float wire2 = Bal.PoleWire * Bal.PoleWire;
         for (int i = 0; i < nodes.Count; i++)
             for (int j = i + 1; j < nodes.Count; j++)
             {
                 var a = nodes[i]; var b = nodes[j];
                 float dx = a.X + a.W / 2f - (b.X + b.W / 2f);
                 float dy = a.Y + a.H / 2f - (b.Y + b.H / 2f);
-                if (dx * dx + dy * dy <= wire2)
+                float wr = MathF.Max(a.WireRange, b.WireRange);   // substations reach far
+                if (dx * dx + dy * dy <= wr * wr)
                 {
                     var ra = Find(a); var rb = Find(b);
                     if (ra != rb) parent[ra] = rb;
@@ -855,7 +860,7 @@ public sealed class Game
             Building? bestNode = null; float bd = float.MaxValue;
             foreach (var n in nodes)
             {
-                float cover = n is Hub ? Bal.HubCover : Bal.PoleCover;
+                float cover = n.CoverRange;      // hub + substation override
                 float dx = b.X + b.W / 2f - (n.X + n.W / 2f);
                 float dy = b.Y + b.H / 2f - (n.Y + n.H / 2f);
                 float d2 = dx * dx + dy * dy;
@@ -1548,6 +1553,8 @@ public sealed class Game
                 AssignOperator(mb);
         AssignBuilders();
         AssignMiners();
+        _haulScanT -= 0.05f;
+        if (_haulScanT <= 0f) { _haulScanT = 0.5f; AssignHaulers(); }
         AssignRepairers();
         AssignGatherers();
         AssignExcavators();
@@ -1562,7 +1569,7 @@ public sealed class Game
             foreach (var c in Cols)
             {
                 if (c.Hp <= 0 || c.Drafted || c.Arriving) continue;
-                if (c.Job != null || c.BuildJob != null || c.MineJob != null) continue;
+                if (c.Job != null || c.BuildJob != null || c.MineJob != null || c.HaulTarget != null) continue;
                 int p = c.Priorities[(int)WorkType.Construct];
                 if (p >= 4) continue;
                 int sk = c.Stats[Bal.StatOf(WorkType.Construct)];
@@ -1581,16 +1588,82 @@ public sealed class Game
         }
     }
 
-    private void AssignMiners()
+    /// <summary>HAULING: every half second, machines with low input buffers
+/// and orphaned ground piles attract a hauler (Haul priority x distance).
+/// Sources: hub stock, storage silos, dropped piles.</summary>
+private void AssignHaulers()
+{
+    // machine resupply
+    foreach (var m in Builds)
+    {
+        if (m is not MachineBase mb || mb.BrokenDown) continue;
+        foreach (var kind in mb.HaulNeeds())
+        {
+            if (mb.In.TryGetValue(kind, out var have) && have > 2) continue;
+            if (Cols.Any(c => c.Hp > 0 && c.HaulTarget == mb && c.HaulKind == kind)) continue;
+            int hubN = HubRef.Stock[(int)kind];
+            StorageSilo? silo = null;
+            foreach (var b in Builds)
+                if (b is StorageSilo s && s.StoredKind == kind && s.N > 0) { silo = s; break; }
+            ItemPile? pile = null;
+            foreach (var p in ItemPiles)
+                if (p.Kind == kind && p.N > 0) { pile = p; break; }
+            if (hubN <= 0 && silo == null && pile == null) continue;
+            var best = FreeHauler(kind, mb.X + mb.W / 2f, mb.Y + mb.H / 2f);
+            if (best != null)
+            {
+                // source preference: hub stock, then dropped piles, then silos
+                var usePile = hubN > 0 ? null : pile;
+                var useSilo = hubN > 0 || usePile != null ? null : silo;
+                best.StartHaul(this, mb, kind, usePile, useSilo);
+            }
+        }
+    }
+
+    // orphan piles: one per scan gets carried to the hub/stockpile
+    foreach (var p in ItemPiles.ToArray())
+    {
+        if (p.N <= 0) continue;
+        if (Cols.Any(c => c.Hp > 0 && c.FetchPile == p)) continue;
+        var best = FreeHauler(p.Kind, p.X, p.Y);
+        best?.StartHaul(this, null, p.Kind, p, null);
+        break;
+    }
+}
+
+private Colonist? FreeHauler(ItemKind kind, float fx, float fy)
+{
+    Colonist? best = null; int bpri = int.MaxValue; float bd = float.MaxValue;
+    foreach (var c in Cols)
+    {
+        if (c.Hp <= 0 || c.Drafted || c.Arriving) continue;
+        if (c.Job != null || c.BuildJob != null || c.MineJob != null || c.RepairJob != null ||
+            c.GatherJob != null || c.ExcavJob != null || c.HaulTarget != null) continue;
+        if (c.CarryN > 0 && c.CarryKind != (int)kind) continue;
+        if (c.CarryN >= Bal.PawnCarryCap) continue;
+        int p = c.Priorities[(int)WorkType.Haul];
+        if (p >= 4) continue;
+        float d = MathF.Abs(c.PosX - fx) + MathF.Abs(c.PosY - fy);
+        if (p < bpri || (p == bpri && d < bd)) { bpri = p; bd = d; best = c; }
+    }
+    return best;
+}
+
+private void AssignMiners()
     {
         foreach (var mo in MineOrders.ToArray())
         {
             if (mo.Miner != null && mo.Miner.Hp > 0) continue;
+            var want = ItemOfTerrain(World.Cell(mo.X, mo.Y).T);
             Colonist? best = null; int bpri = int.MaxValue, bskill = -1; float bd = float.MaxValue;
             foreach (var c in Cols)
             {
                 if (c.Hp <= 0 || c.Drafted || c.Arriving) continue;
-                if (c.Job != null || c.BuildJob != null || c.MineJob != null) continue;
+                if (c.Job != null || c.BuildJob != null || c.MineJob != null || c.HaulTarget != null) continue;
+                // PAWN INVENTORY: full pawns deliver first; a different
+                // cargo type may not mix onto this order
+                if (c.CarryN >= Bal.PawnCarryCap) continue;
+                if (c.CarryN > 0 && c.CarryKind != (int)want) continue;
                 int p = c.Priorities[(int)WorkType.Mine];
                 if (p >= 4) continue;
                 int sk = c.Stats[Bal.StatOf(WorkType.Mine)];
@@ -1627,7 +1700,7 @@ public sealed class Game
             foreach (var c in Cols)
             {
                 if (c.Hp <= 0 || c.Drafted || c.Arriving) continue;
-                if (c.Job != null || c.BuildJob != null || c.MineJob != null || c.RepairJob != null) continue;
+                if (c.Job != null || c.BuildJob != null || c.MineJob != null || c.RepairJob != null || c.HaulTarget != null) continue;
                 int p = c.Priorities[(int)WorkType.Repair];
                 if (p >= 4) continue;
                 int sk = c.Stats[Bal.StatOf(WorkType.Repair)];
@@ -1697,7 +1770,7 @@ public sealed class Game
         foreach (var c in Cols)
         {
             if (c.Hp <= 0 || c.Drafted || c.Arriving) continue;
-            if (c.Job != null || c.BuildJob != null || c.MineJob != null || c.RepairJob != null
+            if (c.Job != null || c.BuildJob != null || c.MineJob != null || c.RepairJob != null || c.HaulTarget != null
                 || c.GatherJob != null || c.ExcavJob != null) continue;
             int p = c.Priorities[(int)WorkType.Mine];
             if (p >= 4) continue;
@@ -1727,7 +1800,11 @@ public sealed class Game
             foreach (var c in Cols)
             {
                 if (c.Hp <= 0 || c.Drafted || c.Arriving) continue;
-                if (c.Job != null || c.BuildJob != null || c.MineJob != null || c.RepairJob != null || c.GatherJob != null) continue;
+                if (c.Job != null || c.BuildJob != null || c.MineJob != null || c.RepairJob != null || c.GatherJob != null || c.HaulTarget != null) continue;
+                // PAWN INVENTORY: full pawns deliver first; only matching
+                // Food cargo may gather more
+                if (c.CarryN >= Bal.PawnCarryCap) continue;
+                if (c.CarryN > 0 && c.CarryKind != (int)ItemKind.Food) continue;
                 int p = c.Priorities[(int)WorkType.Mine];
                 if (p >= 4) continue;
                 int sk = c.Stats[Bal.StatOf(WorkType.Mine)];
@@ -2162,6 +2239,93 @@ public sealed class Game
         _mineAt[key] = order;
     }
 
+    /// <summary>Item a hand-mining cycle on this terrain yields (used for
+    /// pawn-inventory cargo matching and mining itself).</summary>
+    public ItemKind ItemOfTerrain(Terrain t) => t switch
+    {
+        Terrain.Rock => ItemKind.Stone,
+        Terrain.IronOre => ItemKind.IronOre,
+        Terrain.CopperOre => ItemKind.CopperOre,
+        Terrain.Crystal => ItemKind.Crystal,
+        _ => ItemKind.Biomass,
+    };
+
+    /// <summary>Drop cargo as a ground pile (merges with a pile already there).</summary>
+    public void DropPile(float x, float y, ItemKind k, int n)
+    {
+        var ex = ItemPiles.FirstOrDefault(p => p.X == x && p.Y == y && p.Kind == k);
+        if (ex != null) { ex.N += n; return; }
+        ItemPiles.Add(new ItemPile { X = x, Y = y, Kind = k, N = n });
+    }
+
+    public void QueueStockpile(int x0, int y0, int x1, int y1) =>
+        CmdQueue.Enqueue(new SimCmd { Type = CmdType.Stockpile, X = x0, Y = y0, I0 = x1, I1 = y1 });
+
+    private static long PKey(int x, int y) => ((long)x << 32) ^ (uint)y;
+
+    /// <summary>Toggle a rectangle of ground tiles into (or out of) the
+    /// stockpile zone. Loaded tiles can't be unzoned.</summary>
+    private void ToggleStockpile(int x0, int y0, int x1, int y1)
+    {
+        int ax = Math.Min(x0, x1), bx = Math.Max(x0, x1);
+        int ay = Math.Min(y0, y1), by = Math.Max(y0, y1);
+        if (bx - ax > 64 || by - ay > 64) return;                  // sanity
+        bool anyFree = false;
+        for (int x = ax; x <= bx; x++)
+            for (int y = ay; y <= by; y++)
+            {
+                if (!World.InBounds(x, y)) continue;
+                var t = World.Cell(x, y);
+                if (t.B != null || t.T is Terrain.Water or Terrain.Rock) continue;
+                if (!PileZones.Contains(PKey(x, y))) anyFree = true;
+            }
+        bool add = anyFree;                                        // toggle semantics
+        for (int x = ax; x <= bx; x++)
+            for (int y = ay; y <= by; y++)
+            {
+                if (!World.InBounds(x, y)) continue;
+                long key = PKey(x, y);
+                if (add)
+                {
+                    var t = World.Cell(x, y);
+                    if (t.B != null || t.T is Terrain.Water or Terrain.Rock) continue;
+                    PileZones.Add(key);
+                }
+                else if (!PileCells.ContainsKey(key)) PileZones.Remove(key);   // keep loaded tiles
+            }
+    }
+
+    /// <summary>Nearest zone tile that can take this item (same kind or empty).</summary>
+    public (int x, int y)? NearestStockpileCell(float fx, float fy, ItemKind k, float maxDist = 30f)
+    {
+        (int x, int y)? best = null; float bd = maxDist;
+        foreach (var key in PileZones)
+        {
+            int x = (int)(key >> 32), y = (int)(key & 0xFFFFFFFFL);
+            if (PileCells.TryGetValue(key, out var cell) && (cell.Kind != k || cell.N >= Bal.PileTileCap)) continue;
+            float d = MathF.Abs(x + .5f - fx) + Mathf_Abs(y + .5f - fy);
+            if (d < bd) { bd = d; best = (x, y); }
+        }
+        return best;
+    }
+
+    private static float Mathf_Abs(float v) => v < 0 ? -v : v;
+
+    /// <summary>Deposit into a zone tile; false when it wouldn't fit.</summary>
+    public bool DepositStockpile(int x, int y, ItemKind k, int n)
+    {
+        long key = PKey(x, y);
+        if (!PileZones.Contains(key)) return false;
+        if (PileCells.TryGetValue(key, out var cell))
+        {
+            if (cell.Kind != k || cell.N + n > Bal.PileTileCap) return false;
+            cell.N += n;
+            return true;
+        }
+        PileCells[key] = new ItemPile { X = x, Y = y, Kind = k, N = n };
+        return true;
+    }
+
     public void CancelMineOrder(MineOrder o)
     {
         if (o.Miner != null)
@@ -2229,6 +2393,9 @@ public sealed class Game
             case CmdType.Mine:
                 ToggleMineOrder(c.X, c.Y);
                 break;
+                case CmdType.Stockpile:
+                    ToggleStockpile(c.X, c.Y, c.I0, c.I1);
+                    break;
             case CmdType.Bulldoze:
                 Bulldoze(c.X, c.Y);
                 break;
@@ -2236,7 +2403,10 @@ public sealed class Game
                 if (World.InBounds(c.X, c.Y) && World.Cell(c.X, c.Y).B is Fabricator f) f.Recipe = c.I0;
                 break;
             case CmdType.SetFilter:
-                if (World.InBounds(c.X, c.Y) && World.Cell(c.X, c.Y).B is FilterSplitter fs) fs.Filter = (ItemKind)c.I0;
+                if (!World.InBounds(c.X, c.Y)) break;
+                var fb = World.Cell(c.X, c.Y).B;
+                if (fb is FilterSplitter fs) fs.Filter = (ItemKind)c.I0;
+                else if (fb is Inserter ins) ins.Filter = c.I0 >= (int)ItemKind.AdvPart + 1 ? null : (ItemKind)c.I0;
                 break;
             case CmdType.SetRally:
                 if (World.InBounds(c.X, c.Y) && World.Cell(c.X, c.Y).B is BotFactory bf)
@@ -2425,6 +2595,13 @@ public sealed class Game
                     d.BeltProgs = belt.Lane.Select(i => i.Prog).ToArray();
                     d.BendIn = (int?)belt.BendIn;
                     break;
+                case Inserter ins:
+                    d.InsFilter = (int?)ins.Filter ?? -1;
+                    break;
+                case StorageSilo sl:
+                    d.SiloKind = (int?)sl.StoredKind ?? -1;
+                    d.SiloN = sl.N;
+                    break;
             }
             if (b is Lab lab) d.Reserve = lab.Reserve;
             if (b is MachineBase m)
@@ -2458,6 +2635,8 @@ public sealed class Game
                 Arriving = c.Arriving,
                 AteWell = c.AteWellT,
                 Cid = c.Cid,
+                CarryKind = c.CarryKind,
+                CarryN = c.CarryN,
                 GriefT = c.GriefT, CatharsisT = c.CatharsisT, StressT = c.StressT,
                 OpCids = c.Opinions.Keys.ToArray(),
                 OpVals = c.Opinions.Values.ToArray(),
@@ -2473,6 +2652,10 @@ public sealed class Game
 
         foreach (var mo in MineOrders)
             s.MineOrders.Add(new MineDto { X = mo.X, Y = mo.Y, Cycles = mo.CyclesLeft });
+
+        s.ItemPiles = ItemPiles.Select(p => new PileDto { X = p.X, Y = p.Y, Kind = (int)p.Kind, N = p.N }).ToList();
+        s.PileZones = PileZones.ToList();
+        s.PileCells = PileCells.Select(kv => new PileCellDto { Key = kv.Key, Kind = (int)kv.Value.Kind, N = kv.Value.N }).ToList();
 
         foreach (var r in Foes)
             s.Raiders.Add(new RaiderDto
@@ -2671,6 +2854,13 @@ public sealed class Game
                             belt.Lane.Add(new BeltItem((ItemKind)d.BeltKinds[i], d.BeltProgs![i]));
                     if (d.BendIn is int bendIn) belt.BendIn = (Dir)bendIn;
                     break;
+                case Inserter ins:
+                    if (d.InsFilter >= 0) ins.Filter = (ItemKind)d.InsFilter;
+                    break;
+                case StorageSilo sl:
+                    if (d.SiloKind >= 0) sl.StoredKind = (ItemKind)d.SiloKind;
+                    sl.N = d.SiloN;
+                    break;
             }
             if (b is Lab lab) lab.Reserve = d.Reserve;
             if (b is MachineBase m)
@@ -2700,6 +2890,7 @@ public sealed class Game
             c.Arriving = d.Arriving;
             c.AteWellT = d.AteWell;
             c.Cid = d.Cid > 0 ? d.Cid : _nextCid++;
+            c.CarryKind = d.CarryKind; c.CarryN = d.CarryN;
             if (c.Cid >= _nextCid) _nextCid = c.Cid + 1;
             c.GriefT = d.GriefT; c.CatharsisT = d.CatharsisT; c.StressT = d.StressT;
             if (d.OpCids != null && d.OpVals != null)
@@ -2741,6 +2932,16 @@ public sealed class Game
             MineOrders.Add(mo);
             _mineAt[((long)mo.X << 32) ^ (uint)mo.Y] = mo;
         }
+
+        ItemPiles.Clear(); PileZones.Clear(); PileCells.Clear();
+        if (s.ItemPiles != null)
+            foreach (var pd in s.ItemPiles)
+                ItemPiles.Add(new ItemPile { X = pd.X, Y = pd.Y, Kind = (ItemKind)pd.Kind, N = pd.N });
+        if (s.PileZones != null)
+            foreach (var z in s.PileZones) PileZones.Add(z);
+        if (s.PileCells != null)
+            foreach (var pc in s.PileCells)
+                PileCells[pc.Key] = new ItemPile { Kind = (ItemKind)pc.Kind, N = pc.N };
 
         foreach (var d in s.Raiders)
         {

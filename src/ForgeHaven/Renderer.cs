@@ -115,6 +115,7 @@ public static class Renderer
             DrawNight(g, game, v, client);
         DrawTrees(g, game, client);
         DrawBuildings(g, game, client, v);
+        DrawPilesAndZones(g, game, v);
         DrawBlueprints(g, game);
         DrawMineOrders(g, game);
         DrawPrisoners(g, game);
@@ -628,6 +629,54 @@ public static class Renderer
         g.InterpolationMode = old;
     }
 
+    /// <summary>STOCKPILES + dropped cargo: zone outlines with contents,
+    /// ground piles with count badges, and the drag-rectangle preview.</summary>
+    private static void DrawPilesAndZones(Graphics g, Game game, ViewState v)
+    {
+        float sz = Camera.Sz;
+        if (sz < 6) return;
+
+        // zone tiles
+        foreach (var kv in game.PileZones)
+        {
+            long key = kv;
+            int x = (int)(key >> 32), y = (int)(key & 0xFFFFFFFFL);
+            var p = Camera.S(x, y);
+            var r = new Rectangle((int)p.X, (int)p.Y, (int)sz + 1, (int)sz + 1);
+            using (var fill = new SolidBrush(Pal.CA(26, Pal.C(255, 215, 120))))
+                g.FillRectangle(fill, r);
+            using (var pen = new Pen(Pal.CA(160, Pal.C(255, 215, 120))))
+                g.DrawRectangle(pen, r);
+            if (game.PileCells.TryGetValue(key, out var cell))
+            {
+                DrawItemDot(g, x + 0.5f, y + 0.5f, cell.Kind, sz * 0.8f);
+                Text(g, cell.N.ToString(), FSmall, Pal.Text, r.Right - 2, r.Y + 1);
+            }
+        }
+
+        // dropped piles
+        foreach (var pile in game.ItemPiles)
+        {
+            DrawItemDot(g, pile.X, pile.Y, pile.Kind, sz * 0.85f);
+            var p = Camera.S(pile.X, pile.Y);
+            Text(g, pile.N.ToString(), FSmall, Pal.Text, p.X + sz * 0.3f, p.Y - sz * 0.3f);
+        }
+
+        // stockpile drag preview
+        if (v.Tool == ToolKind.Stockpile && v.PileFrom is { } f && v.PileTo is { } t)
+        {
+            int ax = Math.Min(f.x, t.x), ay = Math.Min(f.y, t.y);
+            int bw = Math.Abs(t.x - f.x) + 1, bh = Math.Abs(t.y - f.y) + 1;
+            var p0 = Camera.S(ax, ay);
+            var r = new Rectangle((int)p0.X, (int)p0.Y, (int)(bw * sz), (int)(bh * sz));
+            using (var pen = new Pen(Pal.C(255, 215, 120), 2f))
+            {
+                pen.DashPattern = new float[] { 5, 3 };
+                g.DrawRectangle(pen, r);
+            }
+        }
+    }
+
     private static long _beltClock;      // frozen while paused
 
     /// <summary>HI-RES FRIENDLY DRAW: baked pixel-art (<= S px wide) keeps
@@ -794,19 +843,43 @@ public static class Renderer
             }
             if (b is Inserter ins)
             {
-                // rotate the arm sprite to face its target
-                var st = g.Save();
-                g.TranslateTransform(dest.X + dest.Width / 2f, dest.Y + dest.Height / 2f);
-                g.RotateTransform((int)ins.Face * 90);
-                int off = ins.Swing > 0 ? (int)(MathF.Sin(ins.Swing * MathF.PI) * 4) : 0;
-                g.TranslateTransform(-off, 0);
-                if (Sprites.Building(BuildKind.Inserter).Width > Sprites.S)
-                    g.InterpolationMode = InterpolationMode.Bilinear;
-                g.DrawImage(Sprites.Building(BuildKind.Inserter),
-                    -dest.Width / 2f, -dest.Height / 2f, dest.Width, dest.Height);
-                g.Restore(st);
-                if (ins.Held != null)
-                    DrawItemDot(g, b.X + 0.5f, b.Y + 0.5f, ins.Held.Value, sz);
+                // base plate (baked), then a REAL arm: pivot at the center,
+                // claw sweeping source -> sink, carrying the item icon
+                DrawBuildingSprite(g, b, dest);
+
+                var back = DirU.Opposite(ins.Face);
+                int reach = ins.Reach;
+                float srcX = b.X + 0.5f + DirU.Dx[(int)back] * reach;
+                float srcY = b.Y + 0.5f + DirU.Dy[(int)back] * reach;
+                float snkX = b.X + 0.5f + DirU.Dx[(int)ins.Face];
+                float snkY = b.Y + 0.5f + DirU.Dy[(int)ins.Face];
+
+                float t = ins.Arm;
+                t = t * t * (3f - 2f * t);                 // smoothstep ease
+                float cxw = srcX + (snkX - srcX) * t;
+                float cyw = srcY + (snkY - srcY) * t;
+
+                var piv = Camera.S(b.X + 0.5f, b.Y + 0.5f);
+                var claw = Camera.S(cxw, cyw);
+
+                // two-segment arm: shoulder -> elbow -> claw
+                float ex = piv.X + (claw.X - piv.X) * 0.55f;
+                float ey = piv.Y + (claw.Y - piv.Y) * 0.55f - sz * 0.18f;   // raised elbow
+                using (var arm = new Pen(Pal.C(210, 205, 190), Math.Max(1.5f, sz * 0.09f)))
+                {
+                    arm.StartCap = System.Drawing.Drawing2D.LineCap.Round;
+                    arm.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+                    g.DrawLine(arm, piv.X, piv.Y - sz * 0.1f, ex, ey);
+                    g.DrawLine(arm, ex, ey, claw.X, claw.Y);
+                }
+                // claw
+                using (var clawB = new SolidBrush(Pal.C(235, 190, 80)))
+                    g.FillEllipse(clawB, claw.X - sz * 0.14f, claw.Y - sz * 0.14f, sz * 0.28f, sz * 0.28f);
+
+                if (ins.Held is ItemKind hk)
+                    DrawItemDot(g, cxw, cyw - 0.12f, hk, sz);
+                if (ins.Filter is ItemKind fk)
+                    DrawItemDot(g, b.X + 0.28f, b.Y + 0.28f, fk, sz * 0.8f);
                 continue;
             }
             if (b is Pipe pipe)
@@ -891,6 +964,11 @@ public static class Renderer
 
             DrawBuildingSprite(g, b, dest);
 
+            // live output port on the FACING edge - the art never lies
+            // about where items exit (machines only, not towers)
+            if (b is MachineBase and not Watchtower)
+                DrawPortMarker(g, b, dest);
+
             if (b is WindTurbine)
             {
                 int frame = (int)(game.Time * 9) % 3;
@@ -907,12 +985,21 @@ public static class Renderer
                     g.FillRectangle(Pal.B(Pal.C(150, 230, 150)), pp.X, pp.Y - sz * 0.05f, sz * 0.42f, sz * 0.09f);
                 }
             }
+            if (b is StorageSilo silo)
+            {
+                DrawBuildingSprite(g, b, dest);
+                if (silo.StoredKind is ItemKind sk)
+                {
+                    DrawItemDot(g, b.X + b.W / 2f, b.Y + b.H / 2f, sk, sz * 1.2f);
+                    Text(g, $"{silo.N}", FBold, Pal.Text, dest.Right - 6, dest.Y + 4);
+                }
+                continue;
+            }
             if (b is StorageCrate sc && sc.Items.Count > 0 && Camera.Zoom >= 0.8f)
                 Text(g, sc.Items.Count.ToString(), FSmall, Pal.Text, dest.X + dest.Width - 8, dest.Y + 4);
 
             if (b is MachineBase m)
             {
-                DrawFacingTick(g, m, sz);
                 if (m.Busy)
                 {
                     float w = sz * 0.8f;
@@ -1019,6 +1106,24 @@ public static class Renderer
             float r = sz * (0.10f + 0.13f * net.Fill01);
             g.FillEllipse(Pal.B(col), c.X - r, c.Y - r, r * 2, r * 2);
         }
+    }
+
+    /// <summary>Multiblock machines: bright port chip on the middle of the
+    /// facing edge, matching the edge-output rule.</summary>
+    private static void DrawPortMarker(Graphics g, Building b, Rectangle dest)
+    {
+        int cx = dest.X, cy = dest.Y, cw = 4, ch = 4;
+        switch (b.Face)
+        {
+            case Dir.Right: cx = dest.Right - 4; cy = dest.Y + dest.Height / 2 - 2; ch = 8; break;
+            case Dir.Left:  cx = dest.X;          cy = dest.Y + dest.Height / 2 - 2; ch = 8; break;
+            case Dir.Down:  cy = dest.Bottom - 4; cx = dest.X + dest.Width / 2 - 2; cw = 8; break;
+            default:        cy = dest.Y;          cx = dest.X + dest.Width / 2 - 2; cw = 8; break;
+        }
+        using var br = new SolidBrush(Pal.C(240, 200, 90));
+        g.FillRectangle(br, cx, cy, cw, ch);
+        using var pn = new Pen(Pal.C(60, 50, 30));
+        g.DrawRectangle(pn, cx, cy, cw, ch);
     }
 
     private static void DrawFacingTick(Graphics g, Building b, float sz)
@@ -1251,6 +1356,14 @@ public static class Renderer
             {
                 int a = (int)(c.FlashT / 0.15f * 150);
                 g.FillEllipse(Pal.B(Pal.CA(a, Pal.C(255, 255, 255))), dest.X, dest.Y, w, w);
+            }
+
+            // PAWN INVENTORY: little cargo bundle on the shoulder
+            if (c.CarryN > 0 && w >= 12)
+            {
+                int px = Math.Max(5, (int)(w * 0.48f));
+                var icon = Sprites.ItemIconScaled((ItemKind)c.CarryKind, px);
+                g.DrawImage(icon, dest.Right - px, dest.Y - px / 2, px, px);
             }
 
             Color mc = c.Morale > 60 ? Pal.Good : c.Morale > 30 ? Pal.Warn : Pal.Bad;
@@ -2658,6 +2771,11 @@ public static class Renderer
                 Bar(g, x, y, w, Loc.T("Hunger"), c.Hunger / 100f, c.Hunger < 25 ? Pal.Bad : Pal.Good); y += 24;
                 Bar(g, x, y, w, Loc.T("Rest"), c.Rest / 100f, c.Rest < 25 ? Pal.Warn : Pal.Good); y += 24;
                 Bar(g, x, y, w, Loc.T("Morale"), c.Morale / 100f, c.Morale >= Bal.FlowMorale ? Pal.Good : Pal.Warn); y += 28;
+                if (c.CarryN > 0)
+                {
+                    Text(g, Loc.T("Carrying") + ": " + c.CarryN + " x " + Bal.ItemName((ItemKind)c.CarryKind),
+                        FSmall, Pal.Text, x, y); y += 18;
+                }
                 Text(g, Loc.T("Traits") + ": " + string.Join(", ", c.Traits), FSmall, Pal.TextDim, x, y); y += 18;
                 Text(g, Loc.T("Stance") + ": " + StanceText(c.Stance), FSmall, Pal.TextDim, x, y);
                 break;
@@ -3006,8 +3124,11 @@ public static class Renderer
                         t == Terrain.IronOre ? "Yields Iron Ore." :
                         t == Terrain.CopperOre ? "Yields Copper Ore." :
                         t == Terrain.Crystal ? "Yields Exotic Crystals." :
-                        t is (Terrain.Flora or Terrain.Tree) ? "Yields Biomass (food or boiler fuel)." : "Impassable.",
-                        t == Terrain.Rock ? "" : "Harvest: place a Mine Drill on it.",
+                        t == Terrain.Tree ? "Fell it for wood (Biomass) - hauled to the hub by hand." :
+                        t == Terrain.Flora ? "Yields Biomass (food or boiler fuel)." : "Impassable.",
+                        t == Terrain.Rock ? "" :
+                        t == Terrain.Tree ? "Mark it with the mine tool [V] to fell it." :
+                        "Harvest: place a Mine Drill on it.",
                     });
             }
             return;

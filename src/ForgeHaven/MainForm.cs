@@ -56,6 +56,8 @@ public sealed class MainForm : Form
     private int _biomePick;                                     // NEW WORLDS
     private int _landX, _landY;                                 // picked landing site (world tiles)
     private bool _landPicked;
+    private bool _piling;                          // stockpile rect drag
+    private (int x, int y) _pileFrom, _pileTo;
     private int _lastPaintX, _lastPaintY;      // belt drag: rotate toward the drag
     private int _storyPick;
     private string _genKey = "";
@@ -189,6 +191,8 @@ public sealed class MainForm : Form
         v.Buttons = _buttons;
         v.Mouse = _mouse;
         v.Tool = _tool;
+        v.PileFrom = _piling ? _pileFrom : null;
+        v.PileTo = _piling ? _pileTo : null;
         v.ToolBuilding = _toolKind;
         v.ToolFacing = _facing;
         v.Paused = _view.Paused;
@@ -395,6 +399,9 @@ public sealed class MainForm : Form
             _buttons.Add(new UiButton(new Rectangle(x - 56, y, 52, 40), "tool:mine", "⛏",
                 _tool == ToolKind.Mine ? "mine orders ON" : "hand mining orders [V]",
                 active: _tool == ToolKind.Mine));
+            _buttons.Add(new UiButton(new Rectangle(x - 56 - 58, y + 42, 52, 40), "tool:pile", "▦",
+                _tool == ToolKind.Stockpile ? "stockpile zones ON" : "stockpile zones [drag a rect]",
+                active: _tool == ToolKind.Stockpile));
             _buttons.Add(new UiButton(new Rectangle(x + 6, y, 56, 40), "tool:x", "X⚡", "bulldoze",
                 active: _tool == ToolKind.Bulldoze));
             _buttons.Add(new UiButton(new Rectangle(x + 66, y, 56, 40), "menu:esc", "≡", "menu"));
@@ -470,8 +477,9 @@ public sealed class MainForm : Form
                 _buttons.Add(new UiButton(new Rectangle(x, y + r * 26, 240, 24), $"recipe:{r}",
                     fab.RecipeNameOf(r), active: fab.Recipe == r));
         }
-        if (sel.B is FilterSplitter)
-            _buttons.Add(new UiButton(new Rectangle(x, y, 240, 26), "act:filter", "CYCLE FILTER"));
+        if (sel.B is FilterSplitter or Inserter)
+            _buttons.Add(new UiButton(new Rectangle(x, y, 240, 26), "act:filter",
+                sel.B is Inserter ? "CYCLE GRAB FILTER" : "CYCLE FILTER"));
         if (sel.B is BotFactory)
         {
             _buttons.Add(new UiButton(new Rectangle(x, y, 240, 26), "act:rally",
@@ -662,6 +670,11 @@ public sealed class MainForm : Form
             _panGrab = e.Location;
         }
 
+        if (_piling)
+        {
+            _pileTo = TileUnder(e.Location);
+            return;
+        }
         if (_dragging && _tool == ToolKind.Build && _toolKind != null && DragPaintable(_toolKind.Value))
         {
             var (tx, ty) = TileUnder(e.Location);
@@ -952,6 +965,11 @@ public sealed class MainForm : Form
             _dragging = true;
             return;
         }
+        if (_tool == ToolKind.Stockpile)
+        {
+            _piling = true; _pileFrom = (tx, ty); _pileTo = (tx, ty);
+            return;
+        }
 
         // Phase 1: start a selection box (click = single select on release)
         _selFrom = e.Location;
@@ -971,6 +989,12 @@ public sealed class MainForm : Form
                 return;
             }
             _dragging = false; _everDownInMini = false; _dragSlider = null;
+            if (_piling)
+            {
+                _piling = false;
+                _game.QueueStockpile(_pileFrom.x, _pileFrom.y, _pileTo.x, _pileTo.y);
+                return;
+            }
             if (_selecting)
             {
                 _selecting = false;
@@ -1217,6 +1241,12 @@ public sealed class MainForm : Form
         _tool = ToolKind.Mine; _toolKind = null; _catOpen = false;
     }
 
+    private void TogglePileTool()
+    {
+        if (_tool == ToolKind.Stockpile) { _tool = ToolKind.None; return; }
+        _tool = ToolKind.Stockpile; _toolKind = null; _catOpen = false;
+    }
+
     private void ToggleModal(string m) => _modal = _modal == m ? null : m;
 
     /// <summary>Phase 1: window mode / resolution. GDI+ has no real vsync;
@@ -1399,8 +1429,14 @@ public sealed class MainForm : Form
         {
             // selection actions
             case "act:filter":
-                if (_view.Sel.B is FilterSplitter fs)
-                    _game.QueueFilter(fs.X, fs.Y, ((int)fs.Filter + 1) % (int)ItemKind.AdvPart);
+                if (_view.Sel.B is FilterSplitter fsp)
+                    _game.QueueFilter(fsp.X, fsp.Y, ((int)fsp.Filter + 1) % (int)ItemKind.AdvPart);
+                else if (_view.Sel.B is Inserter ins)
+                {
+                    // cycle: no filter -> IronOre -> ... -> none again
+                    int next = ins.Filter == null ? 0 : ((int)ins.Filter + 1) % ((int)ItemKind.AdvPart + 1);
+                    _game.QueueFilter(ins.X, ins.Y, next);
+                }
                 return;
             case "act:rally": _rallyPending = true; return;
             case "act:capture":
@@ -1482,6 +1518,7 @@ public sealed class MainForm : Form
 
             case "tool:x": ToggleBulldoze(); return;
             case "tool:mine": ToggleMineTool(); return;
+            case "tool:pile": TogglePileTool(); return;
         }
     }
 

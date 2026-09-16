@@ -241,6 +241,7 @@ public enum CmdType
 {
     Place, Bulldoze, SetRecipe, SetFilter, SetRally, SelectTech, Capture,
     DevGive, DevRaid, DevResearch, DevReveal, ToggleGod, Mine, Trade,
+    Stockpile,
 }
 
 // ---------------------------------------------------------------------------

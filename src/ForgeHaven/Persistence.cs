@@ -79,6 +79,21 @@ public sealed class ChunkDto
     public string? OreRle { get; set; }         // Phase 2: per-tile ore units
 }
 
+public sealed class PileDto
+{
+    public float X { get; set; }
+    public float Y { get; set; }
+    public int Kind { get; set; }
+    public int N { get; set; }
+}
+
+public sealed class PileCellDto
+{
+    public long Key { get; set; }
+    public int Kind { get; set; }
+    public int N { get; set; }
+}
+
 public sealed class BuildingDto
 {
     public int Kind { get; set; }
@@ -96,6 +111,9 @@ public sealed class BuildingDto
     public int[]? BeltKinds { get; set; }
     public float[]? BeltProgs { get; set; }
     public int? BendIn { get; set; }               // curved-belt inlet
+    public int SiloKind { get; set; } = -1;        // v0.0.64 silo contents
+    public int SiloN { get; set; }
+    public int InsFilter { get; set; } = -1;       // v0.0.64 inserter grab filter
     public int[]? CrossKinds { get; set; }
     public float[]? CrossProgs { get; set; }
     public int Held { get; set; } = -1;
@@ -133,6 +151,8 @@ public sealed class ColonistDto
     public bool Arriving { get; set; }
     public float AteWell { get; set; }
     public int Cid { get; set; }                 // SOULS: stable identity
+    public int CarryKind { get; set; } = -1;     // PAWN INVENTORY: hauled cargo
+    public int CarryN { get; set; }
     public float GriefT { get; set; }
     public float CatharsisT { get; set; }
     public float StressT { get; set; }
@@ -247,6 +267,9 @@ public sealed class GameSave
     public string TerrainRle { get; set; } = "";
 
     public List<BuildingDto> Buildings { get; set; } = new();
+    public List<PileDto> ItemPiles { get; set; } = new();          // v0.0.64 hauling
+    public List<long> PileZones { get; set; } = new();
+    public List<PileCellDto> PileCells { get; set; } = new();
     public List<BlueprintDto> Blueprints { get; set; } = new();
     public List<MineDto> MineOrders { get; set; } = new();
     public List<ColonistDto> Colonists { get; set; } = new();

@@ -94,6 +94,17 @@ public sealed class Colonist
     // cosmetics (stable across save/load via name hash)
     public int ShirtTone, SkinTone, HairTone, BeltTone;
 
+    // PAWN INVENTORY: cargo hauled by hand (single item type per trip)
+    public int CarryKind = -1;
+    public int CarryN;
+
+    // HAULING: a resupply job (machine target) + where to fetch from
+    public Building? HaulTarget;
+    public ItemKind HaulKind;
+    public ItemPile? FetchPile;
+    public StorageSilo? FetchSilo;
+    private (int x, int y)? _deliverCell;
+
     public Colonist(float x, float y, Random rng)
     {
         Name = Names[rng.Next(0, Names.Length)];
@@ -314,8 +325,10 @@ public sealed class Colonist
                 if (!MoveAlong(g, dt, 1f))
                 {
                     State = ColState.Mining;
-                    ActTimer = g.World.Cell(MineJob.X, MineJob.Y).T == Terrain.Rock
-                        ? Bal.HandMineRockTime : Bal.HandMineOreTime;
+                    var mt = g.World.Cell(MineJob.X, MineJob.Y).T;
+                    ActTimer = mt == Terrain.Rock ? Bal.HandMineRockTime
+                             : mt == Terrain.Tree ? Bal.HandCutTreeTime
+                             : Bal.HandMineOreTime;
                 }
                 break;
 
@@ -328,29 +341,34 @@ public sealed class Colonist
                 var t = g.World.Cell(mo.X, mo.Y).T;
                 if (t == Terrain.Rock)
                 {
-                    g.HubRef.Stock[(int)ItemKind.Stone] += Bal.RockStonesPerCycle;
+                    Take(ItemKind.Stone, Bal.RockStonesPerCycle);
                     g.StatMined++;
                     mo.CyclesLeft--;
                     ActTimer = Bal.HandMineRockTime;
+                    if (CarryN >= Bal.PawnCarryCap) { StartDeliver(g); break; }
                     if (mo.CyclesLeft <= 0)
                     {
                         g.World.SetTerrain(mo.X, mo.Y, Terrain.Ground);
                         g.CancelMineOrder(mo);                    // clears MineJob
-                        State = ColState.Idle;
+                        StartDeliver(g);                          // haul the quarried stone
                     }
+                }
+                else if (t == Terrain.Tree)
+                {
+                    // COLLECTIBLE: a tree is felled in one cut; the wood is
+                    // carried to the hub by hand, no teleporting
+                    g.World.SetTerrain(mo.X, mo.Y, Terrain.Ground);
+                    Take(ItemKind.Biomass, Bal.TreeCutWood);
+                    g.StatMined++;
+                    g.CancelMineOrder(mo);
+                    StartDeliver(g);
                 }
                 else
                 {
-                    var item = t switch
-                    {
-                        Terrain.IronOre => ItemKind.IronOre,
-                        Terrain.CopperOre => ItemKind.CopperOre,
-                        Terrain.Crystal => ItemKind.Crystal,
-                        _ => ItemKind.Biomass,
-                    };
-                    g.HubRef.Stock[(int)item] += Bal.HandOreYield;
+                    Take(g.ItemOfTerrain(t), Bal.HandOreYield);
                     g.StatMined++;
                     ActTimer = Bal.HandMineOreTime;
+                    if (CarryN >= Bal.PawnCarryCap) StartDeliver(g);
                 }
                 break;
             }
@@ -445,11 +463,87 @@ public sealed class Colonist
                 if (car == null || car.Food <= 0) { ClearGather(g); break; }
                 ActTimer -= dt;
                 if (ActTimer > 0) break;
-                g.HubRef.Stock[(int)ItemKind.Food] += car.Food;
-                g.AddLog($"{Name} hauled {car.Food} Food from a carcass.", Pal.Good);
-                car.Food = 0;
-                g.Carcasses.Remove(car);
-                ClearGather(g);
+                // haul what fits; the rest of the carcass waits for the
+                // next trip (any pawn - usually this one right after)
+                int take = Math.Min(car.Food, Bal.PawnCarryCap - CarryN);
+                Take(ItemKind.Food, take);
+                car.Food -= take;
+                if (car.Food <= 0) g.Carcasses.Remove(car);
+                StartDeliver(g);
+                break;
+            }
+
+            case ColState.GoFetch:
+            {
+                // HAULING: at the source - load up, then head for the target
+                if (!MoveAlong(g, dt, 1f))
+                {
+                    int room = Bal.PawnCarryCap - CarryN;
+                    int got = 0;
+                    if (FetchPile != null)
+                    {
+                        got = Math.Min(room, FetchPile.N);
+                        FetchPile.N -= got;
+                        if (FetchPile.N <= 0) g.ItemPiles.Remove(FetchPile);
+                    }
+                    else if (FetchSilo != null)
+                    {
+                        while (room > 0 && FetchSilo.TakeOne(out var sk)) { Take(sk, 1); room--; got++; }
+                    }
+                    else
+                    {
+                        got = Math.Min(room, g.HubRef.Stock[(int)HaulKind]);
+                        g.HubRef.Stock[(int)HaulKind] -= got;
+                    }
+                    if (got > 0) Take(HaulKind, got);
+                    FetchPile = null; FetchSilo = null;
+
+                    if (CarryN <= 0) { HaulTarget = null; State = ColState.Idle; break; }
+                    bool pathed = false;
+                    if (HaulTarget is Building tb && tb.Hp > 0)
+                    {
+                        var spot = g.AdjacentSpot(tb.X, tb.Y, tb.W, tb.H, PosX, PosY);
+                        pathed = spot != null && PathToTile(g, spot.Value.X, spot.Value.Y);
+                    }
+                    if (pathed) { _deliverCell = null; State = ColState.GoDeliver; }
+                    else { HaulTarget = null; StartDeliver(g); }     // hub/stockpile fallback
+                }
+                break;
+            }
+
+            case ColState.GoDeliver:
+            {
+                if (CarryN <= 0 || CarryKind < 0) { State = ColState.Idle; HaulTarget = null; break; }
+                if (!MoveAlong(g, dt, 1f))
+                {
+                    var kind = (ItemKind)CarryKind;
+                    // 1) explicit haul target (machine resupply)
+                    if (HaulTarget is Building tb && tb.Hp > 0)
+                    {
+                        while (CarryN > 0 && tb.AcceptItem(g, kind))
+                        {
+                            CarryN--;
+                            if (CarryN == 0) CarryKind = -1;
+                        }
+                        HaulTarget = null;
+                        if (CarryN > 0) { StartDeliver(g); break; }  // leftovers -> stockpile/hub
+                    }
+                    // 2) stockpile zone cell
+                    else if (_deliverCell is { } dc && g.DepositStockpile(dc.x, dc.y, kind, CarryN))
+                    {
+                        g.AddLog($"{Name} stored {CarryN} {Bal.ItemName(kind)} in a stockpile.", Pal.Good);
+                        CarryKind = -1; CarryN = 0;
+                    }
+                    // 3) the hub
+                    else
+                    {
+                        g.HubRef.Stock[CarryKind] += CarryN;
+                        g.AddLog($"{Name} hauled {CarryN} {Bal.ItemName(kind)} to the hub.", Pal.Good);
+                        CarryKind = -1; CarryN = 0;
+                    }
+                    _deliverCell = null;
+                    State = ColState.Idle;
+                }
                 break;
             }
         }
@@ -702,6 +796,13 @@ public sealed class Colonist
         }
 
         // colonists prefer sleeping through the night
+        // PAWN INVENTORY: an idle pawn with cargo keeps trying to deliver
+        if (CarryN > 0 && State == ColState.Idle)
+        {
+            _deliverRetryT -= dt;
+            if (_deliverRetryT <= 0f) StartDeliver(g);
+        }
+
         if (Rest < (g.IsNight ? 55 : 22)) { State = ColState.GoSleep; SleepTargetIsBed = false; PathToSleepSpot(g); return; }
 
         if (Job != null)
@@ -743,6 +844,9 @@ public sealed class Colonist
     {
         if (_deathDone) return;
         _deathDone = true;
+        // PAWN INVENTORY: cargo drops where the pawn fell
+        if (CarryN > 0 && CarryKind >= 0)
+            g.DropPile(PosX, PosY, (ItemKind)CarryKind, CarryN);
         g.AddLog($"{Name} has died.", Pal.Bad);
         g.AddChron($"{Name} has died.");
         foreach (var o in g.Cols)
@@ -1025,6 +1129,63 @@ public sealed class Colonist
         PosY += dy / dist * step;
         return true;
     }
+
+    /// <summary>Pick cargo up into the pawn inventory (clamped to the
+    /// carry cap; a different cargo type is refused until delivered).</summary>
+    public void Take(ItemKind k, int n)
+    {
+        if (n <= 0) return;
+        if (CarryN == 0) CarryKind = (int)k;
+        if (CarryKind == (int)k) CarryN = Math.Min(Bal.PawnCarryCap, CarryN + n);
+    }
+
+    /// <summary>PAWN INVENTORY: walk to the hub and deposit the cargo. Any
+    /// mine/gather order is RELEASED but stays active, so any pawn (usually
+    /// this one, right after dropping the load) can pick it back up.</summary>
+    private void StartDeliver(Game g)
+    {
+        if (CarryN <= 0) { State = ColState.Idle; return; }
+        if (MineJob != null) { if (MineJob.Miner == this) MineJob.Miner = null; MineJob = null; }
+        if (GatherJob != null) { if (GatherJob.Gatherer == this) GatherJob.Gatherer = null; GatherJob = null; }
+        // STOCKPILE preference: nearest zone tile that takes this cargo
+        if (CarryKind >= 0 &&
+            g.NearestStockpileCell(PosX, PosY, (ItemKind)CarryKind) is { } cell &&
+            PathToTile(g, cell.x, cell.y))
+        {
+            _deliverCell = cell;
+            State = ColState.GoDeliver;
+            return;
+        }
+        _deliverCell = null;
+        if (!PathToNearestHubTile(g)) { State = ColState.Idle; _deliverRetryT = 3f; return; }
+        State = ColState.GoDeliver;
+    }
+
+    private bool PathToTile(Game g, int x, int y)
+    {
+        Path = g.World.FindPath((int)PosX, (int)PosY, x, y, enemy: false);
+        PathIdx = 0;
+        return Path != null;
+    }
+
+    /// <summary>HAULING: fetch `kind` from hub / pile / silo and deliver it
+    /// to `target` (or the hub when target is null).</summary>
+    public void StartHaul(Game g, Building? target, ItemKind kind, ItemPile? pile, StorageSilo? silo)
+    {
+        HaulTarget = target; HaulKind = kind; FetchPile = pile; FetchSilo = silo;
+        bool ok;
+        if (pile != null) ok = PathToTile(g, (int)pile.X, (int)pile.Y);
+        else if (silo != null)
+        {
+            var spot = g.AdjacentSpot(silo.X, silo.Y, silo.W, silo.H, PosX, PosY);
+            ok = spot != null && PathToTile(g, spot.Value.X, spot.Value.Y);
+        }
+        else ok = PathToNearestHubTile(g);
+        if (!ok) { HaulTarget = null; FetchPile = null; FetchSilo = null; State = ColState.Idle; return; }
+        State = ColState.GoFetch;
+    }
+
+    private float _deliverRetryT;
 
     private bool PathToNearestHubTile(Game g)
     {

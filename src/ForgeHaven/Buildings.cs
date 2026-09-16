@@ -12,6 +12,10 @@ public abstract class Building
     public BuildKind Kind;
     public int X, Y, W = 1, H = 1;
 
+    /// <summary>Power wiring/coverage radii (substations override).</summary>
+    public virtual float WireRange => Bal.PoleWire;
+    public virtual float CoverRange => Bal.PoleCover;
+
     /// <summary>Rotate a PLACED building 90° (counter-clockwise with ccw).
     /// Curves keep their bend; only square footprints may rotate.</summary>
     public void Rotate(bool ccw = false)
@@ -58,6 +62,13 @@ public abstract class Building
             BuildKind.Merger => new Merger(),
             BuildKind.FilterSplitter => new FilterSplitter(),
             BuildKind.Inserter => new Inserter(),
+            BuildKind.LongInserter => new LongInserter(),
+            BuildKind.BlastDrill => new BlastDrill(),
+            BuildKind.IndustrialFurnace => new IndustrialFurnace(),
+            BuildKind.StorageSilo => new StorageSilo(),
+            BuildKind.Assembler => new Assembler(),
+            BuildKind.Greenhouse => new Greenhouse(),
+            BuildKind.Substation => new Substation(),
             BuildKind.Rail => new Rail(),
             BuildKind.ElevatedRail => new ElevatedRail(),
             BuildKind.TrainStop => new TrainStop(),
@@ -435,52 +446,102 @@ public sealed class Merger : Building
 // --------------------------------------------------------------  Inserter --
 
 /// <summary>Swinging arm: lifts from the tile behind it onto the tile ahead.</summary>
-public sealed class Inserter : Building
+/// <summary>INSERTER REWORK: a real arm with phases instead of a teleport.
+/// Idle -> swing to source -> grab -> swing to sink -> drop. The claw
+/// visibly carries the item across the arc; throughput = one item per
+/// cycle (slower than direct machine->belt output, by design).
+/// Optional per-inserter filter (cycle on select, like the filter splitter).</summary>
+public class Inserter : Building
 {
-    public ItemKind? Held;
-    public float Cd;
-    public float Swing;          // 0..1 animation
+    public ItemKind? Held;           // item riding in the claw
+    public ItemKind? Filter;         // null = accept everything
+    public float Arm;                // 0 = over source, 1 = over sink
+    public int Phase;                // 0 idle, 1 to-source, 2 grab, 3 to-sink, 4 drop-retry
+    public float T;                  // phase progress (seconds)
+    private float _retry;
 
-    public override void Update(Game g, float dt)
+    public virtual int Reach => 1;                       // tiles to the source
+    public virtual float Cycle => Bal.InserterCycle;     // full swing, seconds
+
+    private (int x, int y) Source(Game g)
     {
-        Cd -= dt;
-        Swing = Math.Max(0, Swing - dt * 2.2f);
+        var d = DirU.Opposite(Face);
+        return (X + DirU.Dx[(int)d] * Reach, Y + DirU.Dy[(int)d] * Reach);
+    }
+    private (int x, int y) Sink(Game g) => DirU.Step(X, Y, Face);
 
-        // push held item to the target ahead
-        if (Held != null)
-        {
-            var (fx, fy) = DirU.Step(X, Y, Face);
-            if (g.World.InBounds(fx, fy))
-            {
-                var tgt = g.World.Cell(fx, fy).B;
-                if (tgt != null && tgt != this && tgt.AcceptItem(g, Held.Value, Face))
-                {
-                    Held = null;
-                    Swing = 1f;
-                    return;
-                }
-            }
-            if (Cd > 0) return;
-        }
+    private bool Wanted(ItemKind k) => Filter == null || Filter == k;
 
-        if (Cd > 0 || Held != null) return;
-        Cd = Bal.InserterEvery;
-
-        var (sx, sy) = DirU.Step(X, Y, DirU.Opposite(Face));
-        if (!g.World.InBounds(sx, sy)) return;
+    private bool TryGrab(Game g)
+    {
+        var (sx, sy) = Source(g);
+        if (!g.World.InBounds(sx, sy)) return false;
         var src = g.World.Cell(sx, sy).B;
         switch (src)
         {
-            case Belt b when b.Lane.Count > 0 && b.Lane[0].Prog > 0.35f:
-                Held = b.Lane[0].Kind; b.Lane.RemoveAt(0); Swing = 1f; break;
-            case MachineBase m when m.Out.Count > 0:
-                Held = m.Out[0]; m.Out.RemoveAt(0); Swing = 1f; break;
-            case StorageCrate c when c.Items.Count > 0:
-                Held = c.Items[0]; c.Items.RemoveAt(0); Swing = 1f; break;
-            case TrainStop st when st.OutBuffer.Count > 0:
-                Held = st.OutBuffer[0]; st.OutBuffer.RemoveAt(0); Swing = 1f; break;
+            case Belt b when b.Lane.Count > 0 && b.Lane[0].Prog > 0.35f && Wanted(b.Lane[0].Kind):
+                Held = b.Lane[0].Kind; b.Lane.RemoveAt(0); return true;
+            case MachineBase m when m.Out.Count > 0 && Wanted(m.Out[0]):
+                Held = m.Out[0]; m.Out.RemoveAt(0); return true;
+            case StorageCrate c when c.Items.Count > 0 && Wanted(c.Items[0]):
+                Held = c.Items[0]; c.Items.RemoveAt(0); return true;
+            case TrainStop st when st.OutBuffer.Count > 0 && Wanted(st.OutBuffer[0]):
+                Held = st.OutBuffer[0]; st.OutBuffer.RemoveAt(0); return true;
+            case StorageSilo s when s.N > 0 && Wanted(s.StoredKind!.Value):
+                Held = s.StoredKind; s.N--; if (s.N == 0) s.StoredKind = null; return true;
+        }
+        return false;
+    }
+
+    private bool TryDrop(Game g)
+    {
+        if (Held == null) return true;
+        var (tx, ty) = Sink(g);
+        if (!g.World.InBounds(tx, ty)) return false;
+        var tgt = g.World.Cell(tx, ty).B;
+        return tgt != null && tgt != this && tgt.AcceptItem(g, Held.Value, Face);
+    }
+
+    public override void Update(Game g, float dt)
+    {
+        float half = Cycle * 0.5f;
+        switch (Phase)
+        {
+            case 0: // resting over the SOURCE: grab the moment something is there
+                _retry -= dt;
+                if (_retry > 0) break;
+                _retry = 0.25f;
+                if (TryGrab(g)) { Phase = 3; T = 0; }      // item rides the claw across
+                break;
+
+            case 1: // swinging back to the source, empty-handed
+                T += dt;
+                Arm = MathF.Max(0f, 1f - T / half);
+                if (T >= half) { Phase = 0; T = 0; }
+                break;
+
+            case 3: // swinging to the SINK, carrying
+                T += dt;
+                Arm = MathF.Min(1f, T / half);
+                if (T >= half) { Phase = 4; T = 0; _retry = 0; }
+                break;
+
+            case 4: // over the sink: drop (retry while blocked, arm stays extended)
+                _retry -= dt;
+                if (_retry > 0) break;
+                _retry = 0.3f;
+                if (TryDrop(g)) { Held = null; Phase = 1; T = 0; }
+                break;
         }
     }
+}
+
+/// <summary>Long-armed inserter: grabs from 2 tiles away (middle lane),
+/// slightly slower swing.</summary>
+public sealed class LongInserter : Inserter
+{
+    public override int Reach => 2;
+    public override float Cycle => Bal.LongInserterCycle;
 }
 
 // ------------------------------------------------------------  Rail stuff --
@@ -633,6 +694,11 @@ public abstract class MachineBase : Building
     public abstract void ConsumeInputs();
     public abstract ItemKind OutputOf();
 
+    /// <summary>HAULING: items a hauler should resupply when the input
+    /// buffer runs low (simple machines only - recipe crafters manage
+    /// their own input UI).</summary>
+    public virtual ItemKind[] HaulNeeds() => Array.Empty<ItemKind>();
+
     protected int InCount(ItemKind k) => In.TryGetValue(k, out var v) ? v : 0;
     protected int InTotal()
     {
@@ -694,22 +760,28 @@ public abstract class MachineBase : Building
     protected void TryPushOut(Game g)
     {
         if (Out.Count == 0) return;
-        // MULTIBLOCK FIX: output leaves from the MIDDLE of the facing
-        // footprint edge. Stepping from the origin corner made a 2x2 drill
-        // facing right/down push into ITSELF (target tile was inside its
-        // own footprint) and corner tiles otherwise.
-        int tx, ty;
+        // EDGE OUTPUT: try EVERY tile of the facing footprint edge in order
+        // - a belt anywhere along the edge works (Mindustry behavior, and
+        // the only honest rule for even-sized edges that have no middle).
+        int tx0 = X, ty0 = Y, dx = 1, dy = 0, n = W;
         switch (Face)
         {
-            case Dir.Right: tx = X + W;     ty = Y + H / 2; break;
-            case Dir.Left:  tx = X - 1;     ty = Y + H / 2; break;
-            case Dir.Down:  tx = X + W / 2; ty = Y + H;     break;
-            default:        tx = X + W / 2; ty = Y - 1;     break;
+            case Dir.Right: tx0 = X + W; ty0 = Y;         dx = 0; dy = 1; n = H; break;
+            case Dir.Left:  tx0 = X - 1; ty0 = Y;         dx = 0; dy = 1; n = H; break;
+            case Dir.Down:  tx0 = X;    ty0 = Y + H;      dx = 1; dy = 0; n = W; break;
+            case Dir.Up:    tx0 = X;    ty0 = Y - 1;      dx = 1; dy = 0; n = W; break;
         }
-        if (!g.World.InBounds(tx, ty)) return;
-        var b = g.World.Cell(tx, ty).B;
-        if (b != null && b != this && b.AcceptItem(g, Out[0], Face))
-            Out.RemoveAt(0);
+        for (int i = 0; i < n; i++)
+        {
+            int tx = tx0 + dx * i, ty = ty0 + dy * i;
+            if (!g.World.InBounds(tx, ty)) continue;
+            var b = g.World.Cell(tx, ty).B;
+            if (b != null && b != this && b.AcceptItem(g, Out[0], Face))
+            {
+                Out.RemoveAt(0);
+                return;
+            }
+        }
     }
 
     public float Craft01 => CraftTime <= 0 ? 0 : Prog / CraftTime;
@@ -744,7 +816,7 @@ public class Drill : MachineBase
                 if (t == Terrain.IronOre) return ItemKind.IronOre;
                 if (t == Terrain.CopperOre) return ItemKind.CopperOre;
                 if (t == Terrain.Crystal) return ItemKind.Crystal;
-                if (t is (Terrain.Flora or Terrain.Tree)) return ItemKind.Biomass;
+                if (t == Terrain.Flora) return ItemKind.Biomass;   // trees are hand-felled collectibles
             }
         return ItemKind.IronOre;
     }
@@ -780,7 +852,6 @@ public class Drill : MachineBase
                     Terrain.CopperOre => ItemKind.CopperOre,
                     Terrain.Crystal => ItemKind.Crystal,
                     Terrain.Flora => ItemKind.Biomass,
-                    Terrain.Tree => ItemKind.Biomass,
                     _ => (ItemKind)(-1),
                 };
                 if (yields == want && g.World.OreAt(x, y) > 0)
@@ -799,6 +870,113 @@ public class Drill : MachineBase
     }
 
     public override bool AcceptItem(Game g, ItemKind k) => false;
+}
+
+// -------------------------------------------------  multiblock machines ---
+
+/// <summary>BLAST DRILL (3x3): Mindustry-style graduation machine. Triple
+/// throughput, big power draw, mines the whole 3x3 footprint.</summary>
+public sealed class BlastDrill : Drill
+{
+    public BlastDrill() { W = 3; H = 3; }
+    public override float CraftTime => Bal.DrillTime * 0.38f;
+}
+
+/// <summary>INDUSTRIAL FURNACE (2x3): a fast, hungry smelter - the mid-game
+/// plate bottleneck breaker.</summary>
+public sealed class IndustrialFurnace : MachineBase
+{
+    private ItemKind _pendingOut = ItemKind.IronPlate;
+
+    public IndustrialFurnace() { W = 2; H = 3; }
+
+    public override float CraftTime => Bal.SmeltTime * 0.5f;
+    public override bool HasInputs() =>
+        InCount(ItemKind.IronOre) >= 1 || InCount(ItemKind.CopperOre) >= 1;
+
+    public override void ConsumeInputs()
+    {
+        if (InCount(ItemKind.IronOre) >= 1) { In[ItemKind.IronOre]--; _pendingOut = ItemKind.IronPlate; }
+        else { In[ItemKind.CopperOre]--; _pendingOut = ItemKind.CopperPlate; }
+    }
+
+    public override ItemKind OutputOf() => _pendingOut;
+    public override ItemKind[] HaulNeeds() => new[] { ItemKind.IronOre, ItemKind.CopperOre };
+
+    public override bool AcceptItem(Game g, ItemKind k) =>
+        (k == ItemKind.IronOre || k == ItemKind.CopperOre) && AcceptIntoBuffer(k);
+}
+
+/// <summary>STORAGE SILO (2x2): 300 units of ONE item type. Belts/inserters
+/// in, inserters + haulers out. The machine-food pantry.</summary>
+public sealed class StorageSilo : Building
+{
+    public StorageSilo() { W = 2; H = 2; }
+    public ItemKind? StoredKind;
+    public int N;
+
+    public override bool AcceptItem(Game g, ItemKind k)
+    {
+        if (StoredKind == null) StoredKind = k;
+        if (k != StoredKind || N >= Bal.SiloCap) return false;
+        N++;
+        return true;
+    }
+
+    /// <summary>Pull one unit out (inserters + haulers).</summary>
+    public bool TakeOne(out ItemKind k)
+    {
+        k = StoredKind ?? ItemKind.IronOre;
+        if (N <= 0) return false;
+        N--;
+        if (N == 0) StoredKind = null;
+        return true;
+    }
+}
+
+/// <summary>ASSEMBLER (3x3): T2 crafter - Gears + Circuits into Advanced
+/// Parts at scale. Worker + power.</summary>
+public sealed class Assembler : MachineBase
+{
+    public Assembler() { W = 3; H = 3; }
+
+    public override float CraftTime => 6f;
+    public override bool HasInputs() =>
+        InCount(ItemKind.Gear) >= 1 && InCount(ItemKind.Circuit) >= 1;
+
+    public override void ConsumeInputs()
+    {
+        In[ItemKind.Gear]--; In[ItemKind.Circuit]--;
+    }
+
+    public override ItemKind OutputOf() => ItemKind.AdvPart;
+    public override ItemKind[] HaulNeeds() => new[] { ItemKind.Gear, ItemKind.Circuit };
+
+    public override bool AcceptItem(Game g, ItemKind k) =>
+        (k == ItemKind.Gear || k == ItemKind.Circuit) && AcceptIntoBuffer(k);
+}
+
+/// <summary>GREENHOUSE (3x3): 1 Biomass seed + power grows into 4 Biomass -
+/// renewable "wood", closes the loop with felled trees.</summary>
+public sealed class Greenhouse : MachineBase
+{
+    public Greenhouse() { W = 3; H = 3; }
+
+    public override float CraftTime => 12f;
+    public override bool HasInputs() => InCount(ItemKind.Biomass) >= 1;
+    public override void ConsumeInputs() => In[ItemKind.Biomass]--;
+    public override ItemKind OutputOf() => ItemKind.Biomass;
+
+    protected override void OnCraftComplete(Game g)
+    {
+        // the seed returns three extra sprouts
+        for (int i = 0; i < 3 && Out.Count < Bal.OutBufCap; i++) Out.Add(ItemKind.Biomass);
+    }
+
+    public override ItemKind[] HaulNeeds() => new[] { ItemKind.Biomass };
+
+    public override bool AcceptItem(Game g, ItemKind k) =>
+        k == ItemKind.Biomass && AcceptIntoBuffer(k);
 }
 
 public sealed class DeepDrill : Drill
@@ -844,6 +1022,7 @@ public sealed class Smelter : MachineBase
     }
 
     public override ItemKind OutputOf() => _pendingOut;
+    public override ItemKind[] HaulNeeds() => new[] { ItemKind.IronOre, ItemKind.CopperOre };
 
     public override bool AcceptItem(Game g, ItemKind k) =>
         (k == ItemKind.IronOre || k == ItemKind.CopperOre) && AcceptIntoBuffer(k);
@@ -1332,7 +1511,16 @@ public sealed class WindTurbine : Building
 }
 
 public sealed class Battery : Building { }
-public sealed class PowerPole : Building { }
+public class PowerPole : Building { }
+
+/// <summary>SUBSTATION (2x2): a power pole with a big wire range and a big
+/// coverage radius - one substation replaces a field of small poles.</summary>
+public sealed class Substation : PowerPole
+{
+    public Substation() { W = 2; H = 2; }
+    public override float WireRange => Bal.SubWire;
+    public override float CoverRange => Bal.SubCover;
+}
 public sealed class Wall : Building { }
 
 /// <summary>MADDOG iter-2: colonist-passable, raider-blocking entry. Raiders
@@ -1378,6 +1566,7 @@ public sealed class Hub : Building
         W = 3; H = 3;
         MaxHp = Hp = 500;
     }
+    public override float CoverRange => Bal.HubCover;
 
     public PointF CenterTile => new(X + 1.5f, Y + 1.5f);
 

@@ -44,6 +44,9 @@ public enum BuildKind
     Door,
     // RECLAMATION: the ark wreck (world-placed, never buildable)
     ArkWreck,
+    // MULTIBLOCK MACHINES (v0.0.64, appended - save compat)
+    BlastDrill, IndustrialFurnace, StorageSilo, Assembler, Greenhouse, Substation,
+    LongInserter,
 }
 
 public enum BuildCategory { Logistics, Production, Power, Defense, Colony }
@@ -70,9 +73,10 @@ public enum ColState
     GoRepair, Repairing,
     GoGather, Gathering,
     GoExcavate, Excavating,
+    GoDeliver, GoFetch,
 }
 
-public enum ToolKind { None, Build, Bulldoze, Mine }
+public enum ToolKind { None, Build, Bulldoze, Mine, Stockpile }
 
 /// <summary>MADDOG iter-3: ambient weather (G1 core). Append-only.</summary>
 public enum WeatherKind { Clear, Rain, Storm }
@@ -89,7 +93,7 @@ public enum AppState { MainMenu, Playing, WorldGen }
 public enum OverlayMode { None, Power, Defense, Logistics, Pollution }
 
 /// <summary>RimWorld-style work categories for the priority screen.</summary>
-public enum WorkType { Mine = 0, Smelt = 1, Craft = 2, Bio = 3, Research = 4, Defense = 5, Construct = 6, Repair = 7 }
+public enum WorkType { Mine = 0, Smelt = 1, Craft = 2, Bio = 3, Research = 4, Defense = 5, Construct = 6, Repair = 7, Haul = 8 }
 
 public enum FluidKind { None, Water, Steam }
 
@@ -120,7 +124,7 @@ public static class Rng
 public static class Bal
 {
     public const int TechCount = 9;
-    public const int WorkCount = 8;               // +Construct (Phase 1) +Repair (MADDOG iter-2)
+    public const int WorkCount = 9;               // +Construct +Repair +Haul (v0.0.64)
     public const int ItemCount = 16;          // ItemKind values (+Stone, Slag, Gear, Circuit)
     public const int PartsToWin = 10;
     public const float DayLengthSec = 180f;
@@ -175,6 +179,13 @@ public static class Bal
 
     public static int CostIron(BuildKind k) => k switch
     {
+        BuildKind.BlastDrill => 12,
+        BuildKind.IndustrialFurnace => 10,
+        BuildKind.StorageSilo => 8,
+        BuildKind.Assembler => 14,
+        BuildKind.Greenhouse => 10,
+        BuildKind.Substation => 6,
+        BuildKind.LongInserter => 3,
         BuildKind.Belt => 1,
         BuildKind.CropPlot => 2,
         BuildKind.FastBelt => 2,
@@ -226,6 +237,9 @@ public static class Bal
 
     public static int CostCopper(BuildKind k) => k switch
     {
+        BuildKind.Substation => 4,
+        BuildKind.Assembler => 6,
+        BuildKind.LongInserter => 1,
         BuildKind.FastBelt => 1,
         BuildKind.Junction => 1,
         BuildKind.Inserter => 1,
@@ -275,15 +289,24 @@ public static class Bal
     {
         BuildKind.Hub => 3,
         BuildKind.Drill or BuildKind.DeepDrill => 2,
+        BuildKind.BlastDrill or BuildKind.Assembler or BuildKind.Greenhouse => 3,
+        BuildKind.IndustrialFurnace => 2,
+        BuildKind.StorageSilo or BuildKind.Substation => 2,
         _ => 1,
     };
-    public static int FootH(BuildKind k) => FootW(k);
+    public static int FootH(BuildKind k) => k switch
+    {
+        BuildKind.IndustrialFurnace => 3,
+        _ => FootW(k),
+    };
 
     /// <summary>Stone is a Phase 1 material mined from rocks by hand.</summary>
     public static int CostStone(BuildKind k) => k switch
     {
         BuildKind.PrimitiveFurnace => 6,
         BuildKind.Door => 3,
+        BuildKind.StorageSilo => 6,
+        BuildKind.IndustrialFurnace => 8,
         _ => 0,
     };
 
@@ -462,6 +485,11 @@ public static class Bal
     {
         BuildKind.Drill => 6,
         BuildKind.DeepDrill => 14,
+        BuildKind.BlastDrill => 30,
+        BuildKind.IndustrialFurnace => 20,
+        BuildKind.Assembler => 25,
+        BuildKind.Greenhouse => 15,
+        BuildKind.StorageSilo => 2,
         BuildKind.Smelter => 8,
         BuildKind.Fabricator => 10,
         BuildKind.FabT2 => 12,
@@ -493,6 +521,8 @@ public static class Bal
     public const float PoleCover = 5f;
     public const float HubCover = 8f;
     public const float PoleWire = 7f;
+    public const float SubWire = 14f;            // SUBSTATION: big wire range
+    public const float SubCover = 9f;            // ...and big coverage
 
     // --------------------------------------------------------------- fluids
 
@@ -661,6 +691,9 @@ public static class Bal
     public const float HandMineRockTime = 5f;    // rock -> stone, per cycle
     public const int HandOreYield = 1;           // ore per hand cycle (tile persists)
     public const int RockStonesPerCycle = 2;
+    public const int PawnCarryCap = 12;           // PAWN INVENTORY: units hauled by hand
+    public const int TreeCutWood = 8;             // collectible: wood per felled tree
+    public const float HandCutTreeTime = 1.8f;    // felling swing
     public const int RockCyclesBeforeDeplete = 3;// then the rock tile turns to ground
     public const float PrimitiveSmeltTime = 6.5f;// no power, needs a worker
     public const float BuildWorkPerPlate = 0.35f;// blueprint seconds per plate of cost
@@ -801,7 +834,11 @@ public static class Bal
     public const float BeltGap = 0.62f;
     public const float FastBeltMul = 1.8f;
 
-    public const float InserterEvery = 0.85f;   // seconds per item swung
+    public const float InserterEvery = 0.85f;   // legacy: old teleport cadence
+    public const float InserterCycle = 1.0f;    // arm swing cycle (grab->drop), seconds
+    public const float LongInserterCycle = 1.25f;
+    public const int SiloCap = 300;             // STORAGE SILO: one item type
+    public const int PileTileCap = 50;          // STOCKPILE: per-tile ground storage
 
     public const int StorageCap = 24;
     public const float StorageEjectEvery = 1.2f;
@@ -1123,6 +1160,15 @@ public sealed class Blueprint
 /// <summary>Manual mining designation (anti-softlock + rock gathering).
 /// Ore orders repeat forever (the tile persists); rock orders deplete the
 /// tile to plain ground after CyclesLeft hauls.</summary>
+/// <summary>PAWN INVENTORY: cargo dropped on the ground (death drops, haul
+/// waypoints). Any hauler can pick it back up.</summary>
+public sealed class ItemPile
+{
+    public float X, Y;
+    public ItemKind Kind;
+    public int N;
+}
+
 public sealed class MineOrder
 {
     public int X, Y;

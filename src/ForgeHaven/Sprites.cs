@@ -186,6 +186,13 @@ public static class Sprites
         _buildings[BuildKind.TrainStop] = BakeTrainStop();
         _buildings[BuildKind.Locomotive] = BakeTrainIcon();
         _buildings[BuildKind.ArkWreck] = BakeArkWreck();
+        _buildings[BuildKind.BlastDrill] = BakeBlastDrill();
+        _buildings[BuildKind.IndustrialFurnace] = BakeIndustrialFurnace();
+        _buildings[BuildKind.StorageSilo] = BakeStorageSilo();
+        _buildings[BuildKind.Assembler] = BakeAssembler();
+        _buildings[BuildKind.Greenhouse] = BakeGreenhouse();
+        _buildings[BuildKind.Substation] = BakeSubstation();
+        _buildings[BuildKind.LongInserter] = _buildings[BuildKind.Inserter];   // arm drawn at runtime
         _buildings[BuildKind.DronePort] = BakeDronePort();
         _buildings[BuildKind.Pipe] = BakePipe();
         _buildings[BuildKind.Pump] = BakePump();
@@ -977,14 +984,8 @@ public static class Sprites
             using (var bolt = new SolidBrush(Pal.C(70, 62, 50)))
                 foreach (var (bx, by) in new[] { (5, 5), (W - 8, 5), (5, W - 8), (W - 8, W - 8) })
                     g.FillRectangle(bolt, bx, by, 3, 3);
-            // output ports on every edge middle (drills can face any way)
-            using (var port = new SolidBrush(Pal.C(52, 48, 42)))
-            {
-                g.FillRectangle(port, W / 2 - 5, 1, 10, 5);
-                g.FillRectangle(port, W / 2 - 5, W - 6, 10, 5);
-                g.FillRectangle(port, 1, W / 2 - 5, 5, 10);
-                g.FillRectangle(port, W - 6, W / 2 - 5, 5, 10);
-            }
+            // (output port is drawn dynamically on the FACING edge by the
+            // renderer - a baked port would lie about where items exit)
             // gantry to the center
             using (var p = new Pen(Pal.C(45, 40, 34), 3f))
             {
@@ -2512,6 +2513,200 @@ public static class Sprites
                 }
                 sets[t][inDir] = fs;
             }
+    }
+
+    // ------------------------------------------------ multiblock machines ---
+
+    private static Bitmap BakeBlastDrill()
+    {
+        int W = S * 3;
+        var b = new Bitmap(W, W);
+        using (var g = Graphics.FromImage(b))
+        {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            var tone = Pal.C(88, 76, 92);
+            using (var baseB = new SolidBrush(tone)) g.FillRectangle(baseB, 1, 1, W - 2, W - 2);
+            using (var edge = new Pen(Pal.Darken(tone, 0.45f), 3f)) g.DrawRectangle(edge, 2, 2, W - 5, W - 5);
+            // heavy corner pylons
+            using (var pyl = new SolidBrush(Pal.C(60, 52, 66)))
+                foreach (var (px, py) in new[] { (6, 6), (W - 18, 6), (6, W - 18), (W - 18, W - 18) })
+                    g.FillRectangle(pyl, px, py, 12, 12);
+            using (var hl = new Pen(Pal.C(140, 120, 150), 2f))
+                foreach (var (px, py) in new[] { (6, 6), (W - 18, 6), (6, W - 18), (W - 18, W - 18) })
+                    g.DrawRectangle(hl, px, py, 12, 12);
+            // triple drill bit cluster in the middle
+            float c = W / 2f;
+            using (var ring = new Pen(Pal.C(52, 46, 56), 3f)) g.DrawEllipse(ring, c - 24, c - 24, 48, 48);
+            foreach (var (ox, oy) in new[] { (-14f, -10f), (14f, -10f), (0f, 14f) })
+            {
+                var pts = new[] { new PointF(c + ox, c + oy - 10), new PointF(c + ox + 7, c + oy),
+                                  new PointF(c + ox, c + oy + 10), new PointF(c + ox - 7, c + oy) };
+                using var br = new SolidBrush(Pal.C(190, 140, 70));
+                g.FillPolygon(br, pts);
+                using var hl2 = new Pen(Pal.C(240, 200, 120), 1.4f);
+                g.DrawLine(hl2, c + ox, c + oy - 10, c + ox, c + oy + 8);
+            }
+            // hazard chevrons on the north rim
+            using (var hz = new Pen(Pal.C(214, 174, 60), 4f))
+                for (int i = 0; i < 7; i++)
+                    g.DrawLine(hz, 10 + i * 14, 8, 18 + i * 14, 14);
+        }
+        return b;
+    }
+
+    private static Bitmap BakeIndustrialFurnace()
+    {
+        int W = S * 2, H = S * 3;
+        var b = new Bitmap(W, H);
+        using (var g = Graphics.FromImage(b))
+        {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            var tone = Pal.C(96, 74, 62);
+            using (var baseB = new SolidBrush(tone)) g.FillRectangle(baseB, 1, 1, W - 2, H - 2);
+            using (var edge = new Pen(Pal.Darken(tone, 0.45f), 3f)) g.DrawRectangle(edge, 2, 2, W - 5, H - 5);
+            // brick courses
+            using (var brick = new Pen(Pal.Darken(tone, 0.2f), 1.6f))
+                for (int i = 1; i < 8; i++)
+                    g.DrawLine(brick, 4, i * (H - 8) / 8f, W - 4, i * (H - 8) / 8f);
+            // twin chimneys
+            using (var chim = new SolidBrush(Pal.C(70, 54, 46)))
+            {
+                g.FillRectangle(chim, W * 0.2f - 5, 6, 10, 26);
+                g.FillRectangle(chim, W * 0.8f - 5, 6, 10, 26);
+            }
+            // firebox with glowing maw
+            float c = W / 2f, fy = H * 0.72f;
+            using (var box = new SolidBrush(Pal.C(56, 42, 36))) g.FillRectangle(box, c - 22, fy - 12, 44, 26);
+            using (var fire = new SolidBrush(Pal.C(255, 150, 50))) g.FillRectangle(fire, c - 14, fy - 4, 28, 12);
+            using (var fire2 = new SolidBrush(Pal.C(255, 220, 90))) g.FillRectangle(fire2, c - 7, fy - 1, 14, 7);
+        }
+        return b;
+    }
+
+    private static Bitmap BakeStorageSilo()
+    {
+        int W = S * 2;
+        var b = new Bitmap(W, W);
+        using (var g = Graphics.FromImage(b))
+        {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            var tone = Pal.C(110, 116, 126);
+            // cylinder body
+            using (var body = new SolidBrush(tone)) g.FillRectangle(body, W * 0.18f, W * 0.16f, W * 0.64f, W * 0.72f);
+            using (var shade = new SolidBrush(Pal.CA(80, Pal.C(30, 34, 40)))) g.FillRectangle(shade, W * 0.64f, W * 0.16f, W * 0.18f, W * 0.72f);
+            using (var dome = new SolidBrush(Pal.Lighten(tone, 0.2f))) g.FillEllipse(dome, W * 0.18f, W * 0.04f, W * 0.64f, W * 0.26f);
+            // bands
+            using (var band = new Pen(Pal.C(66, 72, 82), 2.5f))
+            {
+                g.DrawLine(band, W * 0.18f, W * 0.38f, W * 0.82f, W * 0.38f);
+                g.DrawLine(band, W * 0.18f, W * 0.58f, W * 0.82f, W * 0.58f);
+                g.DrawLine(band, W * 0.18f, W * 0.78f, W * 0.82f, W * 0.78f);
+            }
+            // access ladder
+            using (var lad = new Pen(Pal.C(150, 156, 166), 1.6f))
+                for (int i = 0; i < 9; i++)
+                    g.DrawLine(lad, W * 0.26f, W * 0.22f + i * (W * 0.06f), W * 0.30f, W * 0.22f + i * (W * 0.06f));
+        }
+        return b;
+    }
+
+    private static Bitmap BakeAssembler()
+    {
+        int W = S * 3;
+        var b = new Bitmap(W, W);
+        using (var g = Graphics.FromImage(b))
+        {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            var tone = Pal.C(70, 100, 110);
+            using (var baseB = new SolidBrush(tone)) g.FillRectangle(baseB, 1, 1, W - 2, W - 2);
+            using (var edge = new Pen(Pal.Darken(tone, 0.45f), 3f)) g.DrawRectangle(edge, 2, 2, W - 5, W - 5);
+            // floor grid
+            using (var grid = new Pen(Pal.Darken(tone, 0.25f), 1.2f))
+                for (int i = 1; i < 6; i++)
+                {
+                    g.DrawLine(grid, i * W / 6f, 6, i * W / 6f, W - 6);
+                    g.DrawLine(grid, 6, i * W / 6f, W - 6, i * W / 6f);
+                }
+            // gantry robot arm: base pillar, two segments, gripper
+            float c = W / 2f;
+            using (var pillar = new SolidBrush(Pal.C(50, 58, 66))) g.FillRectangle(pillar, c - 9, W * 0.34f, 18, W * 0.3f);
+            using (var arm = new Pen(Pal.C(220, 180, 80), 6f))
+            {
+                arm.StartCap = System.Drawing.Drawing2D.LineCap.Round;
+                arm.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+                g.DrawLine(arm, c, W * 0.38f, c + 26, W * 0.26f);
+                g.DrawLine(arm, c + 26, W * 0.26f, c + 18, W * 0.52f);
+            }
+            using (var grip = new SolidBrush(Pal.C(235, 235, 225)))
+                g.FillRectangle(grip, c + 12, W * 0.52f, 12, 6);
+            // work light strip
+            using (var strip = new SolidBrush(Pal.C(120, 235, 200))) g.FillRectangle(strip, 8, W - 14, W - 16, 5);
+        }
+        return b;
+    }
+
+    private static Bitmap BakeGreenhouse()
+    {
+        int W = S * 3;
+        var b = new Bitmap(W, W);
+        using (var g = Graphics.FromImage(b))
+        {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            // soil bed
+            using (var soil = new SolidBrush(Pal.C(78, 62, 48))) g.FillRectangle(soil, 4, 4, W - 8, W - 8);
+            // glass roof: two angled panes
+            using (var glass = new SolidBrush(Pal.CA(110, Pal.C(160, 220, 200))))
+            {
+                g.FillPolygon(glass, new[] { new PointF(4, W * 0.5f), new PointF(W / 2f, 8), new PointF(W / 2f, W * 0.5f) });
+                g.FillPolygon(glass, new[] { new PointF(W / 2f, 8), new PointF(W - 4, W * 0.5f), new PointF(W / 2f, W * 0.5f) });
+            }
+            using (var frame = new Pen(Pal.C(90, 96, 92), 2.5f))
+            {
+                g.DrawLine(frame, 4, W * 0.5f, W / 2f, 8);
+                g.DrawLine(frame, W / 2f, 8, W - 4, W * 0.5f);
+                g.DrawLine(frame, 4, W * 0.5f, W - 4, W * 0.5f);
+                g.DrawLine(frame, W / 2f, 8, W / 2f, W * 0.5f);
+            }
+            // rows of sprouts under the glass
+            using (var sprout = new SolidBrush(Pal.C(120, 200, 90)))
+                for (int r = 0; r < 3; r++)
+                    for (int i = 0; i < 6; i++)
+                        g.FillEllipse(sprout, 12 + i * (W - 24) / 5f - 3, W * 0.58f + r * W * 0.13f, 7, 9);
+        }
+        return b;
+    }
+
+    private static Bitmap BakeSubstation()
+    {
+        int W = S * 2;
+        var b = new Bitmap(W, W);
+        using (var g = Graphics.FromImage(b))
+        {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            // lattice tower
+            using (var steel = new Pen(Pal.C(120, 126, 136), 3f))
+            {
+                g.DrawLine(steel, 10, W - 8, W / 2f - 4, 12);
+                g.DrawLine(steel, W - 10, W - 8, W / 2f + 4, 12);
+                g.DrawLine(steel, 10, W - 8, W - 10, W - 8);
+                // cross braces
+                g.DrawLine(steel, 18, W * 0.62f, W - 18, W * 0.62f);
+                g.DrawLine(steel, 22, W * 0.45f, W - 22, W * 0.45f);
+                g.DrawLine(steel, 18, W * 0.62f, W - 22, W * 0.45f);
+                g.DrawLine(steel, W - 18, W * 0.62f, 22, W * 0.45f);
+            }
+            // insulator arms + coils
+            using (var coil = new Pen(Pal.C(90, 200, 235), 2.5f))
+            {
+                g.DrawLine(coil, W / 2f - 30, 16, W / 2f + 30, 16);
+                g.DrawEllipse(coil, W / 2f - 32, 10, 10, 10);
+                g.DrawEllipse(coil, W / 2f + 22, 10, 10, 10);
+            }
+            // hazard base
+            using (var hz = new Pen(Pal.C(214, 174, 60), 3f))
+                g.DrawLine(hz, 8, W - 4, W - 8, W - 4);
+        }
+        return b;
     }
 
     /// <summary>3x3 crashed ark section — landmark scenery, baked at full

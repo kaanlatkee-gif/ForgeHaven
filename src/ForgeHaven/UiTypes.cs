@@ -108,6 +108,7 @@ public struct ViewState
 {
     public AppState App;
     public ToolKind Tool;
+    public (int x, int y)? PileFrom, PileTo;      // stockpile drag preview
     public BuildKind? ToolBuilding;
     public Dir ToolFacing;
     public int GhostX, GhostY;
