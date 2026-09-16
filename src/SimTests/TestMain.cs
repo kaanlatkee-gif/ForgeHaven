@@ -627,7 +627,7 @@ Section("P. save / load round-trip (v4)");
     mm.QueueMine(ox, oy);
     Run(mm, 0.2f);
     Check("mine order accepted", mm.MineOrders.Count == 1);
-    Run(mm, 60f);
+    Run(mm, 220f);     // PAWN INVENTORY: mined ore rides to the hub now
     Check("pawn hand-mines ore to the hub",
         mm.HubRef.Stock[(int)ItemKind.IronOre] > 0);
 
@@ -635,7 +635,7 @@ Section("P. save / load round-trip (v4)");
     var rk = NewGame(55);
     var (rx, ry) = FindOreTile(rk, Terrain.Rock);
     rk.QueueMine(rx, ry);
-    Run(rk, 80f);
+    Run(rk, 220f);    // PAWN INVENTORY: quarried stone is hauled, not teleported
     Check("rock depletes into stone at the hub",
         rk.HubRef.Stock[(int)ItemKind.Stone] >= Bal.RockStonesPerCycle &&
         rk.World.Cell(rx, ry).T == Terrain.Ground);
@@ -1871,6 +1871,179 @@ Section("BELT AUTO-CURVE");
     sideFeed.Update(g, 1f);
     Check("side-entered item lands on the merge belt", merge.Lane.Count == 1);
     Check("side-entered item remembers its entry side", merge.Lane[0].Entry == Dir.Up);
+}
+
+Section("PAWN INVENTORY & TREE COLLECTIBLES");
+{
+    // trees are collectibles now, not drill-able ore
+    var g = NewGame(97);
+    var (tx, ty) = FindOreTile(g, Terrain.Tree, clear: true);
+    Check("drills no longer sit on forest", !Place(g, BuildKind.Drill, tx, ty, Dir.Right));
+    g.World.SetTerrain(tx, ty, Terrain.Flora);     // same tile, now a drill-able patch
+    Check("drills still sit on flora", Place(g, BuildKind.Drill, tx, ty, Dir.Right));
+
+    // fell a tree by hand: wood lands in the pawn's inventory, not the hub
+    var g2 = NewGame(98);
+    var (cx, cy) = FindOreTile(g2, Terrain.Tree, clear: true);
+    int before = g2.HubRef.Stock[(int)ItemKind.Biomass];
+    g2.QueueMine(cx, cy);
+    bool felled = false;
+    for (int i = 0; i < 120 && !felled; i++)
+    {
+        Run(g2, 0.5f);
+        felled = g2.World.Cell(cx, cy).T == Terrain.Ground;
+    }
+    Check("pawn fells the marked tree", felled);
+    Check("felled wood rides in the pawn inventory, not the hub stock",
+        g2.Cols.Any(c => c.CarryN > 0 && c.CarryKind == (int)ItemKind.Biomass) &&
+        g2.HubRef.Stock[(int)ItemKind.Biomass] == before);
+    Run(g2, 80f);
+    Check("felled wood gets hauled to the hub",
+        g2.HubRef.Stock[(int)ItemKind.Biomass] > before ||
+        g2.Cols.Any(c => c.CarryN > 0));          // still mid-trip: fine
+
+    // carry cap + single-cargo rules
+    var c0 = new Colonist(1.5f, 1.5f, new Random(7));
+    c0.Take(ItemKind.Stone, 5);
+    Check("pawn picks up cargo", c0.CarryN == 5 && c0.CarryKind == (int)ItemKind.Stone);
+    c0.Take(ItemKind.Stone, 20);
+    Check("cargo clamps at the carry cap", c0.CarryN == Bal.PawnCarryCap);
+    c0.Take(ItemKind.IronOre, 3);
+    Check("pawns carry one cargo type per trip", c0.CarryKind == (int)ItemKind.Stone && c0.CarryN == Bal.PawnCarryCap);
+}
+
+Section("MULTIBLOCK EDGE OUTPUT v2");
+{
+    // a belt anywhere along the facing edge works (not just one magic tile)
+    var g = NewGame(101);
+    for (int x = 9; x <= 17; x++)
+        for (int y = 9; y <= 15; y++) g.World.SetTerrain(x, y, Terrain.Ground);
+    for (int x = 10; x <= 11; x++)
+        for (int y = 10; y <= 11; y++) g.World.SetTerrain(x, y, Terrain.IronOre);
+    Place(g, BuildKind.Drill, 10, 10, Dir.Right);
+    var drill = (Drill)g.World.Cell(10, 10).B!;
+    Place(g, BuildKind.Belt, 12, 10, Dir.Right);      // UPPER east-edge tile
+    var upper = (Belt)g.World.Cell(12, 10).B!;
+    drill.Out.Add(ItemKind.IronOre);
+    drill.Update(g, 0.016f);
+    Check("2x2 drill feeds the upper east-edge tile", upper.Lane.Count == 1);
+    Run(g, 1f);                                       // let the belt clear
+    drill.Out.Add(ItemKind.IronOre);
+    drill.Update(g, 0.016f);
+    Check("2x2 drill feeds the next edge tile too", upper.Lane.Count == 2);
+}
+
+Section("INSERTER REWORK");
+{
+    // real arm: crate behind -> claw carries -> crate ahead (crate sink:
+    // nothing consumes the item, so the checks are exact)
+    var g = NewGame(102);
+    Place(g, BuildKind.StorageCrate, 3, 4);
+    Place(g, BuildKind.Inserter, 4, 4, Dir.Right);
+    Place(g, BuildKind.StorageCrate, 5, 4);
+    var crate = (StorageCrate)g.World.Cell(3, 4).B!;
+    var sink = (StorageCrate)g.World.Cell(5, 4).B!;
+    crate.Items.Add(ItemKind.IronOre);
+    var ins = (Inserter)g.World.Cell(4, 4).B!;
+    Run(g, 0.2f);       // mid-swing: item must be IN THE CLAW, not teleported
+    Check("arm visibly carries the item (no teleport)",
+        ins.Held == ItemKind.IronOre && sink.Items.Count == 0 && crate.Items.Count == 0);
+    Run(g, 2.5f);
+    Check("arm deposits into the target ahead", sink.Items.Count == 1);
+
+    // filter: inserter ignores non-matching cargo
+    ins.Filter = ItemKind.CopperOre;
+    crate.Items.Add(ItemKind.IronOre);
+    Run(g, 2f);
+    Check("grab filter refuses other items", crate.Items.Count == 1 && ins.Held == null);
+    ins.Filter = null;
+
+    // long inserter reaches 2 tiles back
+    var g2 = NewGame(103);
+    Place(g2, BuildKind.StorageCrate, 2, 6);
+    Place(g2, BuildKind.LongInserter, 4, 6, Dir.Right);
+    Place(g2, BuildKind.StorageCrate, 5, 6);
+    var farCrate = (StorageCrate)g2.World.Cell(2, 6).B!;
+    var sinkCrate = (StorageCrate)g2.World.Cell(5, 6).B!;
+    farCrate.Items.Add(ItemKind.Gear);
+    var li = (LongInserter)g2.World.Cell(4, 6).B!;
+    Run(g2, 3f);
+    Check("long inserter grabs from 2 tiles away",
+        sinkCrate.Items.Count == 1 && farCrate.Items.Count == 0 && li.Reach == 2);
+}
+
+Section("HAULING & PILES");
+{
+    // death drop
+    var g = NewGame(104);
+    var c = g.Cols[0];
+    c.Take(ItemKind.Stone, 7);
+    c.Die(g);
+    Check("dead pawn drops their cargo as a pile",
+        g.ItemPiles.Any(p => p.Kind == ItemKind.Stone && p.N == 7));
+
+    // machine resupply from the hub
+    var g2 = NewGame(105);
+    for (int x = 4; x <= 8; x++)
+        for (int y = 6; y <= 10; y++) g2.World.SetTerrain(x, y, Terrain.Ground);
+    Place(g2, BuildKind.Smelter, 6, 8, Dir.Right);
+    var sm = (Smelter)g2.World.Cell(6, 8).B!;
+    g2.HubRef.Stock[(int)ItemKind.IronOre] = 10;
+    foreach (var col in g2.Cols) col.Priorities[(int)WorkType.Haul] = 4;   // off...
+    g2.Cols[0].Priorities[(int)WorkType.Haul] = 1;                          // ...except one
+    g2.Cols[0].Priorities[(int)WorkType.Smelt] = 4;                         // don't operate it
+    Run(g2, 90f);
+    Check("hauler resupplies a starving smelter from the hub",
+        sm.In.TryGetValue(ItemKind.IronOre, out var n) && n > 0);
+
+    // stockpile zone: designate, deposit, type lock
+    g2.QueueStockpile(4, 6, 6, 8);       // 3x3 zone
+    Run(g2, 0.2f);
+    Check("stockpile zone designated (built tiles skipped)", g2.PileZones.Count == 8);
+    Check("zone deposit works", g2.DepositStockpile(5, 7, ItemKind.Stone, 50));
+    Check("zone tile is type-locked", !g2.DepositStockpile(5, 7, ItemKind.IronOre, 1));
+    Check("zone tile respects capacity", !g2.DepositStockpile(5, 7, ItemKind.Stone, 1));
+    Check("a fresh zone tile takes the same kind", g2.DepositStockpile(4, 6, ItemKind.Stone, 1));
+    Check("nearest accepting cell found", g2.NearestStockpileCell(5, 8, ItemKind.Stone) != null);
+}
+
+Section("NEW MULTIBLOCKS");
+{
+    var g = NewGame(106);
+    for (int x = 20; x <= 34; x++)
+        for (int y = 20; y <= 34; y++) g.World.SetTerrain(x, y, Terrain.Ground);
+    for (int x = 21; x <= 23; x++)
+        for (int y = 21; y <= 23; y++) g.World.SetTerrain(x, y, Terrain.IronOre);
+    Check("blast drill places 3x3 on ore", Place(g, BuildKind.BlastDrill, 21, 21, Dir.Right));
+    Check("blast drill footprint is 3x3",
+        g.Builds.First(b => b.Kind == BuildKind.BlastDrill).W == 3);
+    Check("industrial furnace places 2x3", Place(g, BuildKind.IndustrialFurnace, 26, 21, Dir.Right));
+    var furn = (IndustrialFurnace)g.Builds.First(b => b.Kind == BuildKind.IndustrialFurnace);
+    Check("furnace footprint is 2 wide 3 tall", furn.W == 2 && furn.H == 3);
+    Check("furnace accepts ore", furn.AcceptItem(g, ItemKind.IronOre) && !furn.AcceptItem(g, ItemKind.Gear));
+
+    Check("storage silo places 2x2", Place(g, BuildKind.StorageSilo, 26, 25, Dir.Right));
+    var silo = (StorageSilo)g.Builds.First(b => b is StorageSilo);
+    Check("silo takes its first item type", silo.AcceptItem(g, ItemKind.CopperPlate));
+    Check("silo refuses a second type", !silo.AcceptItem(g, ItemKind.IronOre));
+    Check("silo gives items back", silo.TakeOne(out var sk) && sk == ItemKind.CopperPlate);
+
+    Check("assembler places 3x3", Place(g, BuildKind.Assembler, 30, 21, Dir.Right));
+    var asm = (Assembler)g.Builds.First(b => b.Kind == BuildKind.Assembler);
+    Check("assembler takes gears + circuits",
+        asm.AcceptItem(g, ItemKind.Gear) && asm.AcceptItem(g, ItemKind.Circuit) && !asm.AcceptItem(g, ItemKind.Food));
+
+    Check("greenhouse places 3x3", Place(g, BuildKind.Greenhouse, 30, 25, Dir.Right));
+    var gh = (Greenhouse)g.Builds.First(b => b.Kind == BuildKind.Greenhouse);
+    Check("greenhouse takes biomass seeds", gh.AcceptItem(g, ItemKind.Biomass));
+
+    // substation: two of them 12 tiles apart share a grid (pole wire is 7)
+    Check("substation places 2x2", Place(g, BuildKind.Substation, 21, 26, Dir.Right));
+    Check("second substation places 12 tiles away", Place(g, BuildKind.Substation, 21 + 12, 26, Dir.Right));
+    var subs = g.Builds.Where(b => b is Substation).Cast<Building>().ToList();
+    Run(g, 1f);      // let the power grid rebuild
+    Check("substations wire together over a long span",
+        g.GridOf(subs[0]) != null && g.GridOf(subs[0]) == g.GridOf(subs[1]));
 }
 
 
