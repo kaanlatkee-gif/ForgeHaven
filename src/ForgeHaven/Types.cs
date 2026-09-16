@@ -120,6 +120,12 @@ public static class Rng
     public static bool Chance(float p) => Shared.NextDouble() < p;
 }
 
+public static class AppInfo
+{
+    public const string Name = "ForgeHaven";
+    public const string Version = "v0.0.64";
+}
+
 /// <summary>Balance / tuning constants. Tweak freely.</summary>
 public static class Bal
 {
@@ -377,7 +383,7 @@ public static class Bal
     /// <summary>One-line functional description, shown in the build menu.</summary>
     public static string Blurb(BuildKind k) => Loc.T(k switch
     {
-        BuildKind.Belt => "Moves items in one direction. Drag to paint long runs.",
+        BuildKind.Belt => "Moves items in one direction. Accepts from behind or the sides; rejects its front like Mindustry.",
         BuildKind.FastBelt => "Reinforced express conveyor — 80% faster than a standard belt.",
         BuildKind.Splitter => "Splits an incoming item flow round-robin across up to 3 outputs.",
         BuildKind.Junction => "Two belt lanes crossing without mixing. Main flow follows the arrow; cross flow enters from the arrow's left.",
@@ -390,13 +396,13 @@ public static class Bal
         BuildKind.TrainStop => "Station for the locomotive. Belts load items in; the train unloads onto belts on the facing side.",
         BuildKind.Locomotive => "Places a locomotive on track next to a station. It shuttles cargo between your stations automatically.",
         BuildKind.DronePort => "Houses Logistic Drones (belt them in). Drones ferry items from storage crates to hungry machines and auto-repair damaged buildings in range.",
-        BuildKind.Drill => "Mines the deposit it stands on and pushes ore onto its output side.",
-        BuildKind.DeepDrill => "Heavy drill: double output of a Mine Drill, double appetite for power.",
-        BuildKind.Smelter => "Smelts Iron Ore into Iron Plates, or Copper Ore into Copper Plates.",
-        BuildKind.Fabricator => "Crafts Ammo, Science Packs, Drones, War Bots or Advanced Parts — select to cycle recipes.",
+        BuildKind.Drill => "Mines the deposit it stands on. Adjacent belts/buildings define input/output — no fixed item port.",
+        BuildKind.DeepDrill => "Heavy drill: double output of a Mine Drill, double appetite for power. Outputs to any accepting adjacent side.",
+        BuildKind.Smelter => "Smelts Iron/Copper Ore into Plates. Belts can feed or pull from any side by their direction.",
+        BuildKind.Fabricator => "Crafts Ammo, Science Packs, Drones, War Bots or Advanced Parts; IO is decided by adjacent belts/buildings.",
         BuildKind.FabT2 => "Assembler, second tier: double crafting speed, more power draw.",
         BuildKind.FabT3 => "Assembler, third tier: quadruple crafting speed.",
-        BuildKind.BioProcessor => "Processes biomass into edible Food packs.",
+        BuildKind.BioProcessor => "Processes biomass into edible Food packs; accepts input from any side.",
         BuildKind.StorageCrate => "Buffers up to 24 items, then slowly re-emits them onto its output belt.",
         BuildKind.Reactor => "Generates +100 flat power for the grid it is wired into.",
         BuildKind.SolarPanel => "Generates +40 power at noon, nothing at night. Charge batteries!",
@@ -451,10 +457,10 @@ public static class Bal
         BuildKind.BotFactory => "Needs: 6 power · belt-fed War Bots",
         BuildKind.SpikeTrap => "Needs: nothing · raiders can walk over it",
         BuildKind.IED => "Needs: nothing · single use",
-        BuildKind.Drill => "Needs: ore / crystal / flora tile · 6 power · operator (until Automation)",
-        BuildKind.Smelter => "Needs: 8 power · belt-fed Iron or Copper ore · operator",
-        BuildKind.Fabricator => "Needs: 10 power · belt-fed plates · operator",
-        BuildKind.BioProcessor => "Needs: 6 power · belt-fed Biomass · operator",
+        BuildKind.Drill => "Needs: ore / crystal / flora tile · 6 power · operator · adjacent output belt/storage",
+        BuildKind.Smelter => "Needs: 8 power · Iron/Copper ore from any adjacent input · operator",
+        BuildKind.Fabricator => "Needs: 10 power · recipe inputs from any adjacent side · operator",
+        BuildKind.BioProcessor => "Needs: 6 power · Biomass from any adjacent input · operator",
         BuildKind.StorageCrate => "Needs: items pushed in by belts",
         BuildKind.Reactor => "Needs: wiring — reach a Power Pole",
         BuildKind.SolarPanel => "Needs: wiring — reach a Power Pole",
@@ -474,7 +480,7 @@ public static class Bal
         BuildKind.Lamp => "Needs: 1 power",
         BuildKind.Garden => "Needs: nothing",
         BuildKind.MedBed => "Needs: 2 power",
-        BuildKind.Lab => "Needs: 8 power · a researcher · belt-fed Science Packs",
+        BuildKind.Lab => "Needs: 8 power · a researcher · Science Packs from any adjacent input",
         BuildKind.Hub => "Needs: to be defended",
         _ => "Needs: nothing",
     };
@@ -674,6 +680,23 @@ public static class Bal
         return Math.Abs(dx) >= Math.Abs(dy)
             ? (dx > 0 ? Dir.Right : Dir.Left)
             : (dy > 0 ? Dir.Down : Dir.Up);
+    }
+
+    /// <summary>
+    /// Offset from a belt tile center for item rendering. Entry is the side
+    /// the item actually came from; BendIn is only a fallback for old/manual
+    /// curve items. This keeps straight, left-merge, right-merge and
+    /// both-side merge animations honest.
+    /// </summary>
+    public static PointF BeltItemOffset(Dir face, Dir? bendIn, Dir? entry, float prog)
+    {
+        prog = Math.Clamp(prog, 0f, 1f);
+        var inDir = entry ?? bendIn ?? DirU.Opposite(face);
+        if (prog < 0.5f)
+            return new PointF(DirU.Dx[(int)inDir] * (0.5f - prog),
+                              DirU.Dy[(int)inDir] * (0.5f - prog));
+        return new PointF(DirU.Dx[(int)face] * (prog - 0.5f),
+                          DirU.Dy[(int)face] * (prog - 0.5f));
     }
 
     public static float Sunlight(float dayFrac)
