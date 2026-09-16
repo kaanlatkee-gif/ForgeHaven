@@ -72,7 +72,7 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "ForgeHaven — prototype v0.4";
+        Text = $"{AppInfo.Name} — prototype {AppInfo.Version}";
         FormBorderStyle = FormBorderStyle.Sizable;
         WindowState = FormWindowState.Maximized;
         BackColor = Pal.Bg;

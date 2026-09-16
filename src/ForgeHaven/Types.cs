@@ -120,6 +120,12 @@ public static class Rng
     public static bool Chance(float p) => Shared.NextDouble() < p;
 }
 
+public static class AppInfo
+{
+    public const string Name = "ForgeHaven";
+    public const string Version = "v0.0.64";
+}
+
 /// <summary>Balance / tuning constants. Tweak freely.</summary>
 public static class Bal
 {

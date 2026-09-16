@@ -81,7 +81,7 @@ public static class Renderer
             TextShadow(g, "FORGEHAVEN", FMenuTitle, Pal.Accent, client.Width / 2f, ty, center: true);
             TextShadow(g, Loc.T("build the machine — don't forget the people inside it"),
                 FNorm, Pal.Text, client.Width / 2f, ty + 46, center: true);
-            TextShadow(g, Loc.T("prototype slice · v0.4"), FSmall, Pal.TextDim, client.Width / 2f, ty + 68, center: true);
+            TextShadow(g, Loc.T("prototype slice") + $" · {AppInfo.Version}", FSmall, Pal.TextDim, client.Width / 2f, ty + 68, center: true);
 
             // dialog open (settings / load): veil + only the dialog's buttons
             if (v.ModalTitle != null)
